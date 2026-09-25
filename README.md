@@ -16,16 +16,21 @@ RabbitMQ y Redis ya levantados y las variables de entorno de Spring preconfigura
 ./mvnw spring-boot:run    # arranca contra los servicios del devcontainer
 ```
 
+Con la aplicación arrancada, la documentación interactiva de la API está en
+<http://localhost:8080/swagger-ui.html> (especificación OpenAPI en `/v3/api-docs`).
+
 ## Arquitectura
 
 El código se organiza por *bounded context* (no por capa técnica). Dentro de cada uno, `domain` contiene
 las entidades y sus invariantes, `repository` el acceso a datos, `application` los casos de uso (dueños de
-las transacciones) y `messaging` los listeners de RabbitMQ, que solo leen el mensaje y delegan:
+las transacciones, devuelven vistas `record`, nunca entidades), `web` los controladores REST y
+`messaging` los listeners de RabbitMQ. Controladores y listeners son adaptadores finos: validan o leen la
+entrada, delegan en `application` y traducen el resultado.
 
 | Paquete | Responsabilidad |
 |---|---|
-| `catalog` | Categorías, instructores y cursos — incluye la reserva atómica de plazas (`CourseRepository.tryReserveSeat`) |
-| `enrollment` | Estudiantes e inscripciones — máquina de estados `PENDING_PAYMENT → ACTIVE → COMPLETED` / `CANCELLED`; `EnrollmentService` (inscribir, progreso, cancelar) y `PaymentOutcomeHandler` (reacción a `PaymentConfirmed`/`PaymentFailed`) |
+| `catalog` | Categorías, instructores y cursos — CRUD, publicar/archivar, búsqueda combinable (`CourseSpecifications`) y reserva atómica de plazas (`CourseRepository.tryReserveSeat`) |
+| `enrollment` | Estudiantes e inscripciones — máquina de estados `PENDING_PAYMENT → ACTIVE → COMPLETED` / `CANCELLED`; `EnrollmentService` (inscribir, progreso, cancelar, listados) y `PaymentOutcomeHandler` (reacción a `PaymentConfirmed`/`PaymentFailed`) |
 | `payment` | Pagos — `PENDING → CONFIRMED` / `FAILED`; `PaymentProcessor` consume `EnrollmentCreated` y cobra contra una pasarela simulada |
 | `certificate` | `CertificateIssuer` consume `EnrollmentCompleted` y emite el certificado |
 | `messaging.events` | Contrato de eventos: `sealed interface DomainEvent` + un `record` por evento, y `EventType` (nombre, routing key, versión) |
@@ -33,7 +38,7 @@ las transacciones) y `messaging` los listeners de RabbitMQ, que solo leen el men
 | `messaging.inbox` | Deduplicación del lado consumidor (`processed_events`) y lectura de mensajes entrantes |
 | `messaging.config` | Topología RabbitMQ declarada por código |
 | `idempotency` | Idempotencia a nivel HTTP para la cabecera `Idempotency-Key` |
-| `shared` | `BaseEntity` (id `UUID` + `equals`/`hashCode`) y `ResourceNotFoundException` |
+| `shared` | `BaseEntity`, jerarquía de excepciones de dominio, `GlobalExceptionHandler` (errores RFC 9457), `PageResponse` y configuración (OpenAPI, seguridad) |
 
 Las entidades son modelos ricos: los cambios de estado válidos viven como métodos en la propia entidad
 (`Course.publish()`, `Enrollment.cancel()`, `Payment.confirm()`, ...) y lanzan una excepción de dominio
@@ -43,6 +48,54 @@ El esquema de base de datos vive en `src/main/resources/db/migration` (Flyway, `
 replica en la propia BD las invariantes críticas: `courses` tiene `CHECK (seats_taken <= capacity)`, y
 `enrollments` tiene un índice único parcial que impide que un mismo estudiante tenga dos inscripciones
 `PENDING_PAYMENT`/`ACTIVE` para el mismo curso a la vez.
+
+## API REST
+
+Todos los endpoints cuelgan de `/api` y están documentados en Swagger UI con sus parámetros y códigos de
+respuesta.
+
+| Recurso | Operaciones |
+|---|---|
+| `/api/categories` | crear, listar, obtener, renombrar (`PUT`), `POST /{id}/archive`, `POST /{id}/activate`, borrar (409 si tiene cursos) |
+| `/api/instructors` | crear (email único), listar, obtener, actualizar perfil, borrar (409 si tiene cursos) |
+| `/api/courses` | crear (en `DRAFT`), buscar, obtener, actualizar, `POST /{id}/publish`, `POST /{id}/archive`, borrar (solo `DRAFT`) |
+| `/api/students` | registrar, listar, obtener |
+| `/api/enrollments` | inscribir (`Idempotency-Key` obligatoria), obtener, `PUT /{id}/progress`, `POST /{id}/cancel` |
+| `/api/courses/{id}/enrollments` | estudiantes inscritos en un curso |
+| `/api/students/{id}/enrollments` | cursos de un estudiante |
+
+- **Transiciones de estado como acciones.** Publicar, archivar y cancelar son `POST` sobre un subrecurso, no
+  un `PUT` que cambie el campo `status`. Así la regla de negocio de cada transición vive en un único método
+  del dominio.
+- **Paginación en todos los listados.** Aceptan `page`, `size` (por defecto 20, máximo 100) y `sort`
+  (propiedades de la entidad, p. ej. `sort=price,desc`). Responden con
+  `{content, page, size, totalElements, totalPages}`. Ningún endpoint devuelve una tabla entera.
+- **Búsqueda de cursos.** Todos los filtros son opcionales y combinables: `categoryId`, `level`, `minPrice`,
+  `maxPrice`, `title` (subcadena sin distinguir mayúsculas) y `withAvailableSeats=true`, además de `status`.
+- **Sin N+1 en los listados relacionales.** Cursos con su categoría e instructor, estudiantes de un curso y
+  cursos de un estudiante se cargan con `@EntityGraph` sobre relaciones *to-one*, así que la paginación
+  sigue haciéndose en SQL. `QueryEfficiencyTest` cuenta las sentencias SQL del hilo: cada página cuesta como
+  máximo 2 consultas, sea cual sea su tamaño.
+
+### Errores
+
+`GlobalExceptionHandler` responde siempre `application/problem+json` (RFC 9457) con `title`, `detail`,
+`status` e `instance`. Solo llegan al cliente mensajes escritos por la aplicación: cualquier excepción
+inesperada se registra en el servidor y se devuelve como un 500 genérico.
+
+| Situación | Excepción | HTTP |
+|---|---|---|
+| Cuerpo inválido (Bean Validation) | `MethodArgumentNotValidException` → incluye `errors` por campo | 400 |
+| Cabecera obligatoria ausente, `sort` sobre una propiedad inexistente | `MissingRequestHeaderException`, `PropertyReferenceException` | 400 |
+| Recurso inexistente | `ResourceNotFoundException` | 404 |
+| Curso lleno, doble inscripción, transición de estado inválida, duplicado, recurso en uso | subclases de `ConflictException` | 409 |
+| Modificación concurrente, violación de restricción en BD | `OptimisticLockingFailureException`, `DataIntegrityViolationException` | 409 |
+| Regla de negocio (progreso hacia atrás, aforo menor que las plazas ocupadas, categoría archivada) | `BusinessRuleViolationException` | 422 |
+| `Idempotency-Key` reutilizada con otra petición | `IdempotencyKeyReusedException` | 422 |
+
+El dominio no lanza `IllegalArgumentException` para reglas de negocio: tiene su propia jerarquía de
+excepciones. Así el manejador puede traducir cada caso con precisión sin capturar excepciones genéricas del
+framework, cuyo mensaje podría revelar detalles internos.
 
 ## Flujo de inscripción
 
@@ -252,6 +305,9 @@ procesar, sácalo de la cola". Son mecanismos independientes y complementarios.
 - [x] Casos de uso de inscripción/pago/certificado con reserva atómica de plazas
 - [x] Tests de integración: concurrencia sobre el aforo, flujo completo por RabbitMQ, idempotencia de
       consumidores y de `Idempotency-Key`, mensaje envenenado a la DLQ
-- [ ] Endpoints REST, seguridad JWT por rol, manejo de errores centralizado (ProblemDetail)
-- [ ] Tests unitarios de casos de uso con dobles de prueba; consulta sin N+1
+- [x] Endpoints REST con validación, paginación y OpenAPI; manejo de errores centralizado (ProblemDetail)
+- [x] Tests HTTP end-to-end, de errores y de ausencia de N+1
+- [ ] Seguridad JWT por rol. **Ahora mismo `SecurityConfig` permite todas las peticiones**, de forma
+      provisional, hasta implementar la autenticación
+- [ ] Tests unitarios de casos de uso con dobles de prueba
 - [ ] Observabilidad (métricas de inscripciones/pagos/DLQ, logging con correlación) y `docker-compose` de la app
