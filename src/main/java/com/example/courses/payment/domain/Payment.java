@@ -2,6 +2,8 @@ package com.example.courses.payment.domain;
 
 import com.example.courses.enrollment.domain.Enrollment;
 import com.example.courses.shared.domain.BaseEntity;
+import com.example.courses.shared.domain.BusinessRuleViolationException;
+import com.example.courses.shared.domain.InvalidStateTransitionException;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -44,7 +46,7 @@ public class Payment extends BaseEntity {
 
     private Payment(Enrollment enrollment, BigDecimal amount, String currency, String idempotencyKey) {
         if (amount.signum() < 0) {
-            throw new IllegalArgumentException("amount cannot be negative");
+            throw new BusinessRuleViolationException("amount cannot be negative");
         }
         this.enrollment = Objects.requireNonNull(enrollment, "enrollment");
         this.amount = amount;
@@ -61,14 +63,14 @@ public class Payment extends BaseEntity {
 
     public void confirm() {
         if (status != PaymentStatus.PENDING) {
-            throw new InvalidPaymentStateException(getId(), status, "be confirmed");
+            throw new InvalidStateTransitionException("Payment", getId(), status, "be confirmed");
         }
         status = PaymentStatus.CONFIRMED;
     }
 
     public void fail() {
         if (status != PaymentStatus.PENDING) {
-            throw new InvalidPaymentStateException(getId(), status, "be marked as failed");
+            throw new InvalidStateTransitionException("Payment", getId(), status, "be marked as failed");
         }
         status = PaymentStatus.FAILED;
     }

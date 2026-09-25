@@ -1,6 +1,7 @@
 package com.example.courses.catalog.domain;
 
 import com.example.courses.shared.domain.BaseEntity;
+import com.example.courses.shared.domain.InvalidStateTransitionException;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -48,12 +49,15 @@ public class Category extends BaseEntity {
 
     public void archive() {
         if (status == CategoryStatus.ARCHIVED) {
-            throw new IllegalStateException("Category is already archived: " + getId());
+            throw new InvalidStateTransitionException("Category", getId(), status, "be archived");
         }
         status = CategoryStatus.ARCHIVED;
     }
 
     public void activate() {
+        if (status == CategoryStatus.ACTIVE) {
+            throw new InvalidStateTransitionException("Category", getId(), status, "be activated");
+        }
         status = CategoryStatus.ACTIVE;
     }
 

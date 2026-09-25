@@ -2,6 +2,8 @@ package com.example.courses.enrollment.domain;
 
 import com.example.courses.catalog.domain.Course;
 import com.example.courses.shared.domain.BaseEntity;
+import com.example.courses.shared.domain.BusinessRuleViolationException;
+import com.example.courses.shared.domain.InvalidStateTransitionException;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -62,20 +64,20 @@ public class Enrollment extends BaseEntity {
 
     public void activate() {
         if (status != EnrollmentStatus.PENDING_PAYMENT) {
-            throw new InvalidEnrollmentStateException(getId(), status, "be activated");
+            throw new InvalidStateTransitionException("Enrollment", getId(), status, "be activated");
         }
         status = EnrollmentStatus.ACTIVE;
     }
 
     public boolean updateProgress(int newProgress) {
         if (status != EnrollmentStatus.ACTIVE) {
-            throw new InvalidEnrollmentStateException(getId(), status, "update progress");
+            throw new InvalidStateTransitionException("Enrollment", getId(), status, "update progress");
         }
         if (newProgress < 0 || newProgress > 100) {
-            throw new IllegalArgumentException("progress must be between 0 and 100, got " + newProgress);
+            throw new BusinessRuleViolationException("progress must be between 0 and 100, got " + newProgress);
         }
         if (newProgress < progress) {
-            throw new IllegalArgumentException(
+            throw new BusinessRuleViolationException(
                     "progress cannot go backwards from %d to %d".formatted(progress, newProgress));
         }
         progress = newProgress;
@@ -90,7 +92,7 @@ public class Enrollment extends BaseEntity {
     public void cancel() {
         Set<EnrollmentStatus> cancellable = Set.of(EnrollmentStatus.PENDING_PAYMENT, EnrollmentStatus.ACTIVE);
         if (!cancellable.contains(status)) {
-            throw new InvalidEnrollmentStateException(getId(), status, "be cancelled");
+            throw new InvalidStateTransitionException("Enrollment", getId(), status, "be cancelled");
         }
         status = EnrollmentStatus.CANCELLED;
     }

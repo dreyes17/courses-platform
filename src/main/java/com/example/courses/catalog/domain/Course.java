@@ -1,6 +1,8 @@
 package com.example.courses.catalog.domain;
 
 import com.example.courses.shared.domain.BaseEntity;
+import com.example.courses.shared.domain.BusinessRuleViolationException;
+import com.example.courses.shared.domain.InvalidStateTransitionException;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -65,14 +67,9 @@ public class Course extends BaseEntity {
 
     private Course(String title, String description, int durationHours, CourseLevel level, BigDecimal price,
                     int capacity, Category category, Instructor instructor) {
-        if (durationHours <= 0) {
-            throw new IllegalArgumentException("durationHours must be positive");
-        }
-        if (capacity <= 0) {
-            throw new IllegalArgumentException("capacity must be positive");
-        }
-        if (price.signum() < 0) {
-            throw new IllegalArgumentException("price cannot be negative");
+        validateTerms(durationHours, price, capacity);
+        if (category.getStatus() != CategoryStatus.ACTIVE) {
+            throw new BusinessRuleViolationException("Cannot create a course in archived category " + category.getId());
         }
         this.title = Objects.requireNonNull(title, "title");
         this.description = description;
@@ -94,8 +91,9 @@ public class Course extends BaseEntity {
 
     public void updateDetails(String title, String description, int durationHours, CourseLevel level,
                                BigDecimal price, int capacity) {
+        validateTerms(durationHours, price, capacity);
         if (capacity < seatsTaken) {
-            throw new IllegalArgumentException(
+            throw new BusinessRuleViolationException(
                     "capacity %d cannot be lower than seats already taken %d".formatted(capacity, seatsTaken));
         }
         this.title = Objects.requireNonNull(title, "title");
@@ -106,16 +104,28 @@ public class Course extends BaseEntity {
         this.capacity = capacity;
     }
 
+    private static void validateTerms(int durationHours, BigDecimal price, int capacity) {
+        if (durationHours <= 0) {
+            throw new BusinessRuleViolationException("durationHours must be positive");
+        }
+        if (capacity <= 0) {
+            throw new BusinessRuleViolationException("capacity must be positive");
+        }
+        if (price.signum() < 0) {
+            throw new BusinessRuleViolationException("price cannot be negative");
+        }
+    }
+
     public void publish() {
         if (status != CourseStatus.DRAFT) {
-            throw new InvalidCourseStateException(getId(), status, "be published");
+            throw new InvalidStateTransitionException("Course", getId(), status, "be published");
         }
         status = CourseStatus.PUBLISHED;
     }
 
     public void archive() {
         if (status == CourseStatus.ARCHIVED) {
-            throw new InvalidCourseStateException(getId(), status, "be archived");
+            throw new InvalidStateTransitionException("Course", getId(), status, "be archived");
         }
         status = CourseStatus.ARCHIVED;
     }
@@ -126,10 +136,16 @@ public class Course extends BaseEntity {
      */
     public void assertAcceptsEnrollment() {
         if (status != CourseStatus.PUBLISHED) {
-            throw new InvalidCourseStateException(getId(), status, "accept enrollments");
+            throw new InvalidStateTransitionException("Course", getId(), status, "accept enrollments");
         }
         if (seatsTaken >= capacity) {
             throw new CourseFullException(getId());
+        }
+    }
+
+    public void assertDeletable() {
+        if (status != CourseStatus.DRAFT) {
+            throw new InvalidStateTransitionException("Course", getId(), status, "be deleted");
         }
     }
 
