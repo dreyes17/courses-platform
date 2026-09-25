@@ -11,6 +11,7 @@ import com.example.courses.enrollment.domain.Student;
 import com.example.courses.enrollment.repository.StudentRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -21,8 +22,11 @@ import java.util.UUID;
 @SpringBootTest(properties = {
         "app.outbox.poll-interval=100ms",
         "spring.rabbitmq.listener.simple.retry.initial-interval=100ms",
-        "spring.rabbitmq.listener.simple.retry.max-interval=500ms"
+        "spring.rabbitmq.listener.simple.retry.max-interval=500ms",
+        "spring.jpa.properties.hibernate.session_factory.statement_inspector="
+                + "com.example.courses.support.SqlStatementCounter"
 })
+@AutoConfigureMockMvc
 @Import(TestcontainersConfiguration.class)
 public abstract class AbstractIntegrationTest {
 
