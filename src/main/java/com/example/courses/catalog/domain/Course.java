@@ -120,21 +120,17 @@ public class Course extends BaseEntity {
         status = CourseStatus.ARCHIVED;
     }
 
-    public void reserveSeat() {
+    /**
+     * Seats are reserved with an atomic conditional UPDATE (see {@code CourseRepository#tryReserveSeat});
+     * when that update matches no row, this explains why with the matching domain exception.
+     */
+    public void assertAcceptsEnrollment() {
         if (status != CourseStatus.PUBLISHED) {
             throw new InvalidCourseStateException(getId(), status, "accept enrollments");
         }
         if (seatsTaken >= capacity) {
             throw new CourseFullException(getId());
         }
-        seatsTaken++;
-    }
-
-    public void releaseSeat() {
-        if (seatsTaken == 0) {
-            throw new IllegalStateException("Course %s has no reserved seats to release".formatted(getId()));
-        }
-        seatsTaken--;
     }
 
     public boolean hasAvailableSeats() {
