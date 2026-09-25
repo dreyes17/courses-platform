@@ -364,6 +364,27 @@ Tras agotar los reintentos, ese mensaje se mueve a la DLQ en vez de bloquear la 
 resuelve "este mensaje ya lo procesé, no lo proceses otra vez"; la DLQ resuelve "este mensaje no se puede
 procesar, sácalo de la cola". Son mecanismos independientes y complementarios.
 
+## Tests
+
+`./mvnw test` ejecuta los 81 tests en unos 25 segundos. Los de integración comparten un único contexto de
+Spring y un único par de contenedores (`AbstractIntegrationTest`), por eso la suite es rápida pese a usar
+PostgreSQL y RabbitMQ reales.
+
+| Nivel | Qué cubre | Clases |
+|---|---|---|
+| **Unitarios de dominio** | Máquinas de estado e invariantes de `Course` y `Enrollment`, sin Spring ni mocks | `CourseTest`, `EnrollmentTest` |
+| **Unitarios de casos de uso** (Mockito) | Ramas de error y lo que *no* debe ocurrir: no consumir plaza si ya está inscrito, no cobrar una inscripción cancelada, no reactivar una cancelada, no emitir un segundo certificado, entregas duplicadas sin efectos, login que no revela qué emails existen | `EnrollmentServiceTest`, `PaymentProcessorTest`, `PaymentOutcomeHandlerTest`, `CertificateIssuerTest`, `IdempotentRequestsTest`, `AccountServiceTest` |
+| **Integración** (Testcontainers) | Concurrencia sobre el aforo (20 hilos, 3 plazas), flujo completo por RabbitMQ, idempotencia de consumidores con entregas duplicadas, mensaje envenenado → DLQ, `Idempotency-Key` | `EnrollmentConcurrencyTest`, `EnrollmentFlowTest`, `ConsumerIdempotencyTest` |
+| **HTTP** (MockMvc) | Flujo end-to-end por la API con cada rol, mapeo de errores a `problem+json`, 401/403 y reglas de propiedad, ausencia de N+1 | `EnrollmentApiTest`, `ErrorHandlingApiTest`, `SecurityApiTest`, `QueryEfficiencyTest` |
+| **Contrato** | Campos del JSON de los eventos publicados | `EventContractTest` |
+
+Para comprobar que los tests no pasan por casualidad, quité a propósito dos protecciones y confirmé que los
+tests fallaban:
+
+- sin el `@EntityGraph`, `QueryEfficiencyTest` detecta el N+1;
+- sin la comprobación de estado en `PaymentProcessor`, `PaymentProcessorTest` detecta que se cobra una
+  inscripción cancelada.
+
 ## Limitaciones conocidas
 
 - **Pago confirmado de una inscripción ya cancelada.** Si el estudiante cancela mientras el cobro está en
@@ -388,6 +409,6 @@ procesar, sácalo de la cola". Son mecanismos independientes y complementarios.
 - [x] Endpoints REST con validación, paginación y OpenAPI; manejo de errores centralizado (ProblemDetail)
 - [x] Tests HTTP end-to-end, de errores y de ausencia de N+1
 - [x] Seguridad JWT por rol, con reglas de propiedad por recurso y tests de 401/403
-- [ ] Tests unitarios de casos de uso con dobles de prueba
+- [x] Tests unitarios de dominio y de casos de uso con dobles de prueba (Mockito)
 - [x] `Dockerfile` multi-stage y `docker-compose.yml` con healthchecks y secretos por entorno
 - [ ] Observabilidad (métricas de inscripciones/pagos/DLQ, logging con correlación)
