@@ -28,7 +28,9 @@ Cómo se comporta el despliegue:
 - **Secretos:** solo llegan por el entorno o por `.env`. Si falta alguno obligatorio, `docker compose` se
   detiene y dice cuál.
 - **Orden de arranque:** la aplicación espera a que Postgres y RabbitMQ pasen su healthcheck. Su propio
-  healthcheck consulta `/actuator/health/readiness`.
+  healthcheck consulta `/actuator/health/readiness` en el puerto de gestión (ver [Actuator](#actuator-y-puerto-de-gestión)).
+- **Puertos:** solo se publica el 8080 (la API). Actuator escucha en el 8081, que solo es accesible dentro
+  de la red de Docker.
 - **Arranque de la aplicación:** Flyway crea el esquema y la topología de RabbitMQ se declara sola, sin
   pasos manuales.
 - **Imagen:** el `Dockerfile` compila con el wrapper `mvnw` en una etapa JDK y ejecuta en una etapa JRE, con
@@ -149,7 +151,7 @@ TOKEN=$(curl -s localhost:8080/api/auth/token -H 'Content-Type: application/json
 curl localhost:8080/api/students -H "Authorization: Bearer $TOKEN"
 ```
 
-**Autorización.** La cadena de filtros solo distingue lo público (login, registro, Swagger, health) de lo
+**Autorización.** La cadena de filtros de la API solo distingue lo público (login, registro, Swagger) de lo
 autenticado. Las reglas de rol y de propiedad van junto a cada endpoint con `@PreAuthorize`, apoyadas en
 `AccessRules` (`@access.ownsEnrollment(...)`, `@access.teachesCourse(...)`), que hace consultas `exists`
 ligeras:
@@ -176,6 +178,42 @@ ligeras:
   hay ningún valor por defecto para el secreto.
 - La migración `V2__user_accounts.sql` garantiza en la BD que cada rol esté vinculado exactamente a su
   perfil (estudiante, instructor o ninguno en el caso del ADMIN).
+
+## Actuator y puerto de gestión
+
+Actuator (`health`, `info`, `prometheus`) no se sirve en el puerto de la API. Tiene su propio puerto de
+gestión: `management.server.port`, 8081 por defecto, configurable con `MANAGEMENT_SERVER_PORT`.
+
+| Puerto | Qué sirve | Quién llega | Autenticación |
+|---|---|---|---|
+| 8080 | API y Swagger | clientes (publicado en Compose) | JWT, salvo login, registro y Swagger |
+| 8081 | `/actuator/health`, `/actuator/info`, `/actuator/prometheus` | solo la red interna del despliegue (`expose`, sin `ports`) | ninguna |
+
+**Por qué.** Prometheus y las sondas de un orquestador consultan estos endpoints cada pocos segundos con
+una configuración fija y no saben obtener un JWT, que además caduca en una hora. Había tres opciones:
+
+- dejar las métricas públicas en el 8080, lo que expone datos internos;
+- darle al scraper una credencial fija, que es un secreto más que gestionar y rotar;
+- aislar Actuator por red.
+
+Elegí la tercera, que es la práctica habitual en contenedores. El aislamiento lo da la red: el 8081 nunca
+se publica fuera, así que no hace falta autenticación. Por eso `health` muestra además el detalle de la BD
+y de RabbitMQ.
+
+**Cómo se aplica.**
+- La cadena de seguridad de la API también se aplicaría al puerto de gestión, así que `SecurityConfig`
+  define una cadena propia para él, con prioridad.
+- Esa cadena solo se aplica cuando la petición llega al puerto **real** del servidor de gestión (lo guarda
+  `ManagementPort` al arrancar) **y** su ruta está bajo `/actuator`. Así funciona también con un puerto
+  aleatorio, y aunque alguien configurase el mismo puerto para API y gestión, esta cadena nunca podría abrir
+  la API.
+
+Con Compose, un Prometheus en la misma red leería `http://app:8081/actuator/prometheus`. Así se comprobó:
+
+```bash
+docker run --rm --network courses_default curlimages/curl -s http://app:8081/actuator/health
+# {"status":"UP","components":{"db":{"status":"UP",...},"rabbit":{"status":"UP",...},...}}
+```
 
 ## Flujo de inscripción
 
@@ -366,9 +404,10 @@ procesar, sácalo de la cola". Son mecanismos independientes y complementarios.
 
 ## Tests
 
-`./mvnw test` ejecuta los 81 tests en unos 25 segundos. Los de integración comparten un único contexto de
-Spring y un único par de contenedores (`AbstractIntegrationTest`), por eso la suite es rápida pese a usar
-PostgreSQL y RabbitMQ reales.
+`./mvnw test` ejecuta los 85 tests en unos 30 segundos. Casi todos los de integración comparten un único
+contexto de Spring y un único par de contenedores (`AbstractIntegrationTest`), por eso la suite es rápida pese
+a usar PostgreSQL y RabbitMQ reales. La excepción es `ManagementPortTest`, que necesita servidores reales en
+dos puertos distintos.
 
 | Nivel | Qué cubre | Clases |
 |---|---|---|
@@ -376,6 +415,7 @@ PostgreSQL y RabbitMQ reales.
 | **Unitarios de casos de uso** (Mockito) | Ramas de error y lo que *no* debe ocurrir: no consumir plaza si ya está inscrito, no cobrar una inscripción cancelada, no reactivar una cancelada, no emitir un segundo certificado, entregas duplicadas sin efectos, login que no revela qué emails existen | `EnrollmentServiceTest`, `PaymentProcessorTest`, `PaymentOutcomeHandlerTest`, `CertificateIssuerTest`, `IdempotentRequestsTest`, `AccountServiceTest` |
 | **Integración** (Testcontainers) | Concurrencia sobre el aforo (20 hilos, 3 plazas), flujo completo por RabbitMQ, idempotencia de consumidores con entregas duplicadas, mensaje envenenado → DLQ, `Idempotency-Key` | `EnrollmentConcurrencyTest`, `EnrollmentFlowTest`, `ConsumerIdempotencyTest` |
 | **HTTP** (MockMvc) | Flujo end-to-end por la API con cada rol, mapeo de errores a `problem+json`, 401/403 y reglas de propiedad, ausencia de N+1 | `EnrollmentApiTest`, `ErrorHandlingApiTest`, `SecurityApiTest`, `QueryEfficiencyTest` |
+| **Puertos reales** | Actuator accesible sin credenciales solo en el puerto de gestión, health con BD y broker, API protegida y ausente en ese puerto | `ManagementPortTest` |
 | **Contrato** | Campos del JSON de los eventos publicados | `EventContractTest` |
 
 Para comprobar que los tests no pasan por casualidad, quité a propósito dos protecciones y confirmé que los
@@ -411,4 +451,5 @@ tests fallaban:
 - [x] Seguridad JWT por rol, con reglas de propiedad por recurso y tests de 401/403
 - [x] Tests unitarios de dominio y de casos de uso con dobles de prueba (Mockito)
 - [x] `Dockerfile` multi-stage y `docker-compose.yml` con healthchecks y secretos por entorno
-- [ ] Observabilidad (métricas de inscripciones/pagos/DLQ, logging con correlación)
+- [x] Actuator en un puerto de gestión interno: health con BD/RabbitMQ y `/actuator/prometheus` para scraping
+- [ ] Observabilidad: métricas de negocio (inscripciones, pagos, DLQ, outbox `FAILED`) y logging con correlación
