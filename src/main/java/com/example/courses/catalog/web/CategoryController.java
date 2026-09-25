@@ -11,6 +11,7 @@ import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -35,7 +36,8 @@ class CategoryController {
     }
 
     @PostMapping
-    @Operation(summary = "Create a category (created ACTIVE)")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Create a category (created ACTIVE). ADMIN only")
     ResponseEntity<CategoryView> create(@Valid @RequestBody CategoryRequest request) {
         CategoryView created = categories.create(request.name(), request.description());
         var location = ServletUriComponentsBuilder.fromCurrentRequest().path("/{id}").buildAndExpand(created.id());
@@ -55,25 +57,29 @@ class CategoryController {
     }
 
     @PutMapping("/{id}")
-    @Operation(summary = "Rename a category or change its description")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Rename a category or change its description. ADMIN only")
     CategoryView update(@PathVariable UUID id, @Valid @RequestBody CategoryRequest request) {
         return categories.update(id, request.name(), request.description());
     }
 
     @PostMapping("/{id}/archive")
-    @Operation(summary = "Archive a category; no new courses can be created in it")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Archive a category; no new courses can be created in it. ADMIN only")
     CategoryView archive(@PathVariable UUID id) {
         return categories.archive(id);
     }
 
     @PostMapping("/{id}/activate")
-    @Operation(summary = "Reactivate an archived category")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Reactivate an archived category. ADMIN only")
     CategoryView activate(@PathVariable UUID id) {
         return categories.activate(id);
     }
 
     @DeleteMapping("/{id}")
-    @Operation(summary = "Delete a category that has no courses (409 otherwise)")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Delete a category that has no courses (409 otherwise). ADMIN only")
     ResponseEntity<Void> delete(@PathVariable UUID id) {
         categories.delete(id);
         return ResponseEntity.noContent().build();

@@ -68,7 +68,7 @@ class QueryEfficiencyTest extends AbstractIntegrationTest {
                 new BigDecimal("35"), "course", true, null);
 
         SqlStatementCounter.reset();
-        var page = courseService.search(criteria, PageRequest.of(0, ROWS, Sort.by("createdAt")));
+        var page = courseService.search(criteria, PageRequest.of(0, ROWS, Sort.by("createdAt")), false);
 
         assertThat(page.getContent()).hasSize(ROWS)
                 .allSatisfy(course -> assertThat(course.categoryName()).isNotBlank())

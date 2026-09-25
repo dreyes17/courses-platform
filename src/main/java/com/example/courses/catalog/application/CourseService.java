@@ -2,6 +2,7 @@ package com.example.courses.catalog.application;
 
 import com.example.courses.catalog.domain.Category;
 import com.example.courses.catalog.domain.Course;
+import com.example.courses.catalog.domain.CourseStatus;
 import com.example.courses.catalog.domain.Instructor;
 import com.example.courses.catalog.repository.CategoryRepository;
 import com.example.courses.catalog.repository.CourseRepository;
@@ -68,16 +69,22 @@ public class CourseService {
         courses.delete(course);
     }
 
+    /** With publishedOnly, drafts and archived courses are reported as not found. */
     @Transactional(readOnly = true)
-    public CourseView get(UUID id) {
-        return CourseView.from(find(id));
+    public CourseView get(UUID id, boolean publishedOnly) {
+        Course course = find(id);
+        if (publishedOnly && course.getStatus() != CourseStatus.PUBLISHED) {
+            throw new ResourceNotFoundException("Course", id);
+        }
+        return CourseView.from(course);
     }
 
     @Transactional(readOnly = true)
-    public Page<CourseView> search(CourseSearchCriteria criteria, Pageable pageable) {
+    public Page<CourseView> search(CourseSearchCriteria criteria, Pageable pageable, boolean publishedOnly) {
+        CourseStatus status = publishedOnly ? CourseStatus.PUBLISHED : criteria.status();
         var specification = CourseSpecifications.matching(criteria.categoryId(), criteria.level(),
                 criteria.minPrice(), criteria.maxPrice(), criteria.title(), criteria.withAvailableSeats(),
-                criteria.status());
+                status);
         return courses.findAll(specification, pageable).map(CourseView::from);
     }
 

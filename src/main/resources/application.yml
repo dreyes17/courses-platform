@@ -47,7 +47,13 @@ spring:
 
 app:
   jwt:
-    secret: ${JWT_SECRET:dev-only-secret-change-me-dev-only-secret-change-me}
+    # No default on purpose: the app refuses to start without a secret (>= 32 bytes) from the environment.
+    secret: ${JWT_SECRET}
+    ttl: 1h
+  security:
+    admin:
+      email: ${ADMIN_EMAIL:}
+      password: ${ADMIN_PASSWORD:}
   outbox:
     poll-interval: 500ms
     batch-size: 100

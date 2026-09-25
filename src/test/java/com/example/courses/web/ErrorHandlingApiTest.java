@@ -13,7 +13,7 @@ class ErrorHandlingApiTest extends ApiTestSupport {
 
     @Test
     void invalidBodyReturns400WithFieldErrors() {
-        var result = post("/api/courses", """
+        var result = post("/api/courses", adminToken(), """
                 {"title": "", "durationHours": 0, "price": -1}""");
 
         assertThat(result).hasStatus(HttpStatus.BAD_REQUEST);
@@ -25,7 +25,7 @@ class ErrorHandlingApiTest extends ApiTestSupport {
 
     @Test
     void unknownResourceReturns404Problem() {
-        var result = get("/api/courses/" + UUID.randomUUID());
+        var result = get("/api/courses/" + UUID.randomUUID(), adminToken());
 
         assertThat(result).hasStatus(HttpStatus.NOT_FOUND);
         assertThat(result).hasContentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON);
@@ -34,21 +34,19 @@ class ErrorHandlingApiTest extends ApiTestSupport {
 
     @Test
     void enrollingWithoutIdempotencyKeyIsRejected() {
-        var result = mvc.post().uri("/api/enrollments").contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                        {"studentId": "%s", "courseId": "%s"}""".formatted(UUID.randomUUID(), UUID.randomUUID()))
-                .exchange();
+        var result = post("/api/enrollments", registerStudent().token(), """
+                {"courseId": "%s"}""".formatted(UUID.randomUUID()));
 
         assertThat(result).hasStatus(HttpStatus.BAD_REQUEST);
     }
 
     @Test
     void fullCourseReturns409() {
-        String courseId = publishedCourse(1, BigDecimal.TEN).toString();
-        assertThat(enroll(student().toString(), courseId, UUID.randomUUID().toString()))
+        String courseId = createPublishedCourse(createInstructor(), 1, BigDecimal.TEN);
+        assertThat(enroll(registerStudent().token(), courseId, UUID.randomUUID().toString()))
                 .hasStatus(HttpStatus.CREATED);
 
-        var result = enroll(student().toString(), courseId, UUID.randomUUID().toString());
+        var result = enroll(registerStudent().token(), courseId, UUID.randomUUID().toString());
 
         assertThat(result).hasStatus(HttpStatus.CONFLICT);
         assertThat(result).bodyJson().extractingPath("$.detail").asString().contains("no available seats");
@@ -56,38 +54,42 @@ class ErrorHandlingApiTest extends ApiTestSupport {
 
     @Test
     void reusingIdempotencyKeyForAnotherRequestReturns422() {
-        String studentId = student().toString();
+        Account instructor = createInstructor();
+        String studentToken = registerStudent().token();
         String key = UUID.randomUUID().toString();
-        enroll(studentId, publishedCourse(5, BigDecimal.TEN).toString(), key);
+        enroll(studentToken, createPublishedCourse(instructor, 5, BigDecimal.TEN), key);
 
-        var result = enroll(studentId, publishedCourse(5, BigDecimal.TEN).toString(), key);
+        var result = enroll(studentToken, createPublishedCourse(instructor, 5, BigDecimal.TEN), key);
 
         assertThat(result).hasStatus(HttpStatus.UNPROCESSABLE_CONTENT);
     }
 
     @Test
     void invalidStateTransitionReturns409() {
-        String courseId = publishedCourse(5, BigDecimal.TEN).toString();
+        Account instructor = createInstructor();
+        String courseId = createPublishedCourse(instructor, 5, BigDecimal.TEN);
 
-        assertThat(post("/api/courses/" + courseId + "/publish", null)).hasStatus(HttpStatus.CONFLICT);
+        assertThat(post("/api/courses/" + courseId + "/publish", instructor.token(), null))
+                .hasStatus(HttpStatus.CONFLICT);
     }
 
     @Test
     void duplicateCategoryNameReturns409() {
         String body = """
                 {"name": "Data %s"}""".formatted(unique());
-        post("/api/categories", body);
+        post("/api/categories", adminToken(), body);
 
-        assertThat(post("/api/categories", body)).hasStatus(HttpStatus.CONFLICT);
+        assertThat(post("/api/categories", adminToken(), body)).hasStatus(HttpStatus.CONFLICT);
     }
 
     @Test
     void unknownSortPropertyReturns400() {
-        assertThat(get("/api/courses?sort=doesNotExist")).hasStatus(HttpStatus.BAD_REQUEST);
+        assertThat(get("/api/courses?sort=doesNotExist", adminToken())).hasStatus(HttpStatus.BAD_REQUEST);
     }
 
     @Test
     void pageSizeIsCappedAt100() {
-        assertThat(get("/api/categories?size=5000")).bodyJson().extractingPath("$.size").isEqualTo(100);
+        assertThat(get("/api/categories?size=5000", adminToken()))
+                .bodyJson().extractingPath("$.size").isEqualTo(100);
     }
 }

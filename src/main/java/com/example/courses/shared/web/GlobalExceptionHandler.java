@@ -1,6 +1,7 @@
 package com.example.courses.shared.web;
 
 import com.example.courses.idempotency.application.IdempotencyKeyReusedException;
+import com.example.courses.identity.application.InvalidCredentialsException;
 import com.example.courses.shared.application.ResourceNotFoundException;
 import com.example.courses.shared.domain.BusinessRuleViolationException;
 import com.example.courses.shared.domain.ConflictException;
@@ -14,6 +15,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -64,6 +66,17 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(IdempotencyKeyReusedException.class)
     ProblemDetail handleIdempotencyKeyReused(IdempotencyKeyReusedException e) {
         return problem(HttpStatus.UNPROCESSABLE_CONTENT, "Idempotency-Key reused", e.getMessage());
+    }
+
+    @ExceptionHandler(InvalidCredentialsException.class)
+    ProblemDetail handleInvalidCredentials(InvalidCredentialsException e) {
+        return problem(HttpStatus.UNAUTHORIZED, "Authentication failed", e.getMessage());
+    }
+
+    /** Raised by @PreAuthorize inside the controller call, after the filter chain has already let it through. */
+    @ExceptionHandler(AccessDeniedException.class)
+    ProblemDetail handleAccessDenied(AccessDeniedException e) {
+        return problem(HttpStatus.FORBIDDEN, "Access denied", "You are not allowed to perform this operation");
     }
 
     @ExceptionHandler(PropertyReferenceException.class)

@@ -26,7 +26,8 @@ final class CatalogRequests {
     record CreateInstructorRequest(
             @NotBlank @Size(max = 150) String name,
             @NotBlank @Email @Size(max = 255) String email,
-            @Size(max = 5000) String bio) {
+            @Size(max = 5000) String bio,
+            @NotBlank @Size(min = 10, max = 72) String password) {
     }
 
     record UpdateInstructorRequest(

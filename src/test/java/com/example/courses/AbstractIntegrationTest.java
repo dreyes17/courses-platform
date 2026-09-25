@@ -24,11 +24,17 @@ import java.util.UUID;
         "spring.rabbitmq.listener.simple.retry.initial-interval=100ms",
         "spring.rabbitmq.listener.simple.retry.max-interval=500ms",
         "spring.jpa.properties.hibernate.session_factory.statement_inspector="
-                + "com.example.courses.support.SqlStatementCounter"
+                + "com.example.courses.support.SqlStatementCounter",
+        "app.jwt.secret=test-only-secret-at-least-32-bytes-long!",
+        "app.security.admin.email=" + AbstractIntegrationTest.ADMIN_EMAIL,
+        "app.security.admin.password=" + AbstractIntegrationTest.ADMIN_PASSWORD
 })
 @AutoConfigureMockMvc
 @Import(TestcontainersConfiguration.class)
 public abstract class AbstractIntegrationTest {
+
+    protected static final String ADMIN_EMAIL = "admin@courses.test";
+    protected static final String ADMIN_PASSWORD = "admin-password-for-tests";
 
     @Autowired
     protected TransactionTemplate transactionTemplate;

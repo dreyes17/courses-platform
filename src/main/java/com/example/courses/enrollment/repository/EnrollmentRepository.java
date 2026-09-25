@@ -19,6 +19,10 @@ public interface EnrollmentRepository extends JpaRepository<Enrollment, UUID> {
     @EntityGraph(attributePaths = "course")
     Page<Enrollment> findByStudentId(UUID studentId, Pageable pageable);
 
+    boolean existsByIdAndStudentId(UUID id, UUID studentId);
+
+    boolean existsByIdAndCourseInstructorId(UUID id, UUID instructorId);
+
     boolean existsByCourseIdAndStudentIdAndStatusIn(UUID courseId, UUID studentId,
                                                       Collection<EnrollmentStatus> statuses);
 }
