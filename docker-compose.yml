@@ -57,9 +57,13 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:?set ADMIN_EMAIL in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
     ports:
-      - "8080:8080"
+      - "8080:8080"   # API only
+    # Actuator (health, info, prometheus) on 8081: reachable by other containers in this network
+    # (e.g. a Prometheus scraper at http://app:8081/actuator/prometheus) but deliberately not published.
+    expose:
+      - "8081"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health/readiness"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/actuator/health/readiness"]
       interval: 10s
       timeout: 5s
       start_period: 60s

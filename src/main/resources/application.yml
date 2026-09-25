@@ -64,6 +64,10 @@ app:
       decline-above: 10000
 
 management:
+  # Actuator lives on its own port, which deployments keep inside their private network (see
+  # docker-compose.yml). It needs no credentials there, so Prometheus and health probes can read it.
+  server:
+    port: ${MANAGEMENT_SERVER_PORT:8081}
   endpoints:
     web:
       exposure:
@@ -72,4 +76,5 @@ management:
     health:
       probes:
         enabled: true
-      show-details: when-authorized
+      # Safe because the management port is never published outside the deployment network.
+      show-details: always
