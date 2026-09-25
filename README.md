@@ -8,20 +8,48 @@ Stack: Java 21 · Spring Boot 4.1 · PostgreSQL · Flyway · Spring AMQP · Spri
 
 ## Arrancar el proyecto
 
-Este repo incluye un devcontainer (ver [`.devcontainer/README.md`](.devcontainer/README.md)) con Postgres,
-RabbitMQ y Redis ya levantados y las variables de entorno de Spring preconfiguradas. Dentro de él:
+### Con Docker Compose (solo necesita Docker)
 
 ```bash
-./mvnw test              # compila, migra el esquema en Testcontainers y valida el contexto de Spring
-./mvnw spring-boot:run    # arranca contra los servicios del devcontainer
+cp .env.example .env          # secretos de evaluación local; .env está fuera de git
+docker compose up --build     # PostgreSQL + RabbitMQ + aplicación
 ```
+
+- La aplicación queda en <http://localhost:8080>. La documentación interactiva está en
+  <http://localhost:8080/swagger-ui.html> y la especificación OpenAPI en `/v3/api-docs`.
+- La interfaz de RabbitMQ está en <http://localhost:15672>, con las credenciales de `.env`. Sirve para ver
+  las colas y las DLQ.
+- Hay una cuenta ADMIN creada con `ADMIN_EMAIL`/`ADMIN_PASSWORD`. Ver [Seguridad](#seguridad) para obtener un
+  token.
+- `docker compose down -v` lo para todo y borra los volúmenes de datos.
+
+Cómo se comporta el despliegue:
+
+- **Secretos:** solo llegan por el entorno o por `.env`. Si falta alguno obligatorio, `docker compose` se
+  detiene y dice cuál.
+- **Orden de arranque:** la aplicación espera a que Postgres y RabbitMQ pasen su healthcheck. Su propio
+  healthcheck consulta `/actuator/health/readiness`.
+- **Arranque de la aplicación:** Flyway crea el esquema y la topología de RabbitMQ se declara sola, sin
+  pasos manuales.
+- **Imagen:** el `Dockerfile` compila con el wrapper `mvnw` en una etapa JDK y ejecuta en una etapa JRE, con
+  un usuario sin privilegios. Usa las capas de Spring Boot, así que un cambio de código no vuelve a enviar
+  las dependencias.
+- **Tests:** la imagen no ejecuta tests. Los de integración necesitan Docker (Testcontainers) y se lanzan
+  aparte con `./mvnw test`.
+
+### Tests y desarrollo local
+
+```bash
+./mvnw test              # unitarios + integración; Testcontainers levanta PostgreSQL y RabbitMQ
+./mvnw spring-boot:run    # arranca contra servicios ya levantados (p. ej. los del devcontainer)
+```
+
+Este repo incluye un devcontainer (ver [`.devcontainer/README.md`](.devcontainer/README.md)) con Java 21,
+Postgres, RabbitMQ y las variables de entorno ya configuradas.
 
 La aplicación **no arranca sin `JWT_SECRET`** (mínimo 32 bytes). Es a propósito: así nunca se ejecuta con una
 clave por defecto. El devcontainer ya inyecta un valor de desarrollo, y también `ADMIN_EMAIL`/`ADMIN_PASSWORD`,
 con los que se crea la primera cuenta ADMIN (tras cambiar variables hay que reconstruir el contenedor).
-
-Con la aplicación arrancada, la documentación interactiva de la API está en
-<http://localhost:8080/swagger-ui.html> (especificación OpenAPI en `/v3/api-docs`).
 
 ## Arquitectura
 
@@ -361,4 +389,5 @@ procesar, sácalo de la cola". Son mecanismos independientes y complementarios.
 - [x] Tests HTTP end-to-end, de errores y de ausencia de N+1
 - [x] Seguridad JWT por rol, con reglas de propiedad por recurso y tests de 401/403
 - [ ] Tests unitarios de casos de uso con dobles de prueba
-- [ ] Observabilidad (métricas de inscripciones/pagos/DLQ, logging con correlación) y `docker-compose` de la app
+- [x] `Dockerfile` multi-stage y `docker-compose.yml` con healthchecks y secretos por entorno
+- [ ] Observabilidad (métricas de inscripciones/pagos/DLQ, logging con correlación)
