@@ -1,0 +1,12 @@
+target/
+.git/
+.devcontainer/
+.context7-docs/
+.claude/
+.vscode/
+.idea/
+*.pdf
+.env
+docker-compose.yml
+Dockerfile
+README.md

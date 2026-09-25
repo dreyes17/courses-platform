@@ -1,4 +1,5 @@
 # Local-only config
+.env
 .context7-docs/
 .devcontainer/.env
 .claude/settings.local.json
