@@ -1,12 +1,8 @@
 package com.example.courses;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 
-@Import(TestcontainersConfiguration.class)
-@SpringBootTest
-class CoursesApplicationTests {
+class CoursesApplicationTests extends AbstractIntegrationTest {
 
 	@Test
 	void contextLoads() {
