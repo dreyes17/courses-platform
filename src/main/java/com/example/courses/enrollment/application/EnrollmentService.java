@@ -17,6 +17,8 @@ import com.example.courses.payment.repository.PaymentRepository;
 import com.example.courses.shared.application.ResourceNotFoundException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.json.JsonMapper;
@@ -94,6 +96,22 @@ public class EnrollmentService {
     @Transactional(readOnly = true)
     public EnrollmentView get(UUID enrollmentId) {
         return EnrollmentView.from(findEnrollment(enrollmentId));
+    }
+
+    @Transactional(readOnly = true)
+    public Page<CourseEnrollmentView> listStudentsOfCourse(UUID courseId, Pageable pageable) {
+        if (!courses.existsById(courseId)) {
+            throw new ResourceNotFoundException("Course", courseId);
+        }
+        return enrollments.findByCourseId(courseId, pageable).map(CourseEnrollmentView::from);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<StudentEnrollmentView> listCoursesOfStudent(UUID studentId, Pageable pageable) {
+        if (!students.existsById(studentId)) {
+            throw new ResourceNotFoundException("Student", studentId);
+        }
+        return enrollments.findByStudentId(studentId, pageable).map(StudentEnrollmentView::from);
     }
 
     private EnrollmentView enrollNow(UUID studentId, UUID courseId) {

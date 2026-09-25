@@ -6,6 +6,7 @@ import com.example.courses.enrollment.application.EnrollmentService;
 import com.example.courses.enrollment.repository.EnrollmentRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Pageable;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -58,7 +59,7 @@ class EnrollmentConcurrencyTest extends AbstractIntegrationTest {
         assertThat(results).filteredOn(Outcome.ENROLLED::equals).hasSize(capacity);
         assertThat(results).filteredOn(Outcome.COURSE_FULL::equals).hasSize(contenders - capacity);
         assertThat(seatsTaken(courseId)).isEqualTo(capacity);
-        assertThat(enrollments.findByCourseIdFetchStudent(courseId)).hasSize(capacity);
+        assertThat(enrollments.findByCourseId(courseId, Pageable.unpaged()).getTotalElements()).isEqualTo(capacity);
     }
 
     private enum Outcome { ENROLLED, COURSE_FULL }
