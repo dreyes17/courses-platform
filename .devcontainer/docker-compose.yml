@@ -33,6 +33,9 @@ services:
       SPRING_DATA_REDIS_PORT: ${REDIS_PORT:-6379}
       # Dev-only signing secret; real deployments must inject their own (>= 256 bits).
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-dev-only-secret-change-me}
+      # Dev-only bootstrap admin created on startup; real deployments inject their own.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@courses.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-dev-only-admin-password}
       # Used by the Postgres MCP server (see /.mcp.json).
       DATABASE_URI: postgresql://${POSTGRES_USER:-courses}:${POSTGRES_PASSWORD:-courses}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-courses}
       RABBITMQ_MANAGEMENT_URL: http://${RABBITMQ_HOST:-rabbitmq}:${RABBITMQ_MANAGEMENT_PORT:-15672}

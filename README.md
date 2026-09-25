@@ -16,6 +16,10 @@ RabbitMQ y Redis ya levantados y las variables de entorno de Spring preconfigura
 ./mvnw spring-boot:run    # arranca contra los servicios del devcontainer
 ```
 
+La aplicación **no arranca sin `JWT_SECRET`** (mínimo 32 bytes). Es a propósito: así nunca se ejecuta con una
+clave por defecto. El devcontainer ya inyecta un valor de desarrollo, y también `ADMIN_EMAIL`/`ADMIN_PASSWORD`,
+con los que se crea la primera cuenta ADMIN (tras cambiar variables hay que reconstruir el contenedor).
+
 Con la aplicación arrancada, la documentación interactiva de la API está en
 <http://localhost:8080/swagger-ui.html> (especificación OpenAPI en `/v3/api-docs`).
 
@@ -38,7 +42,8 @@ entrada, delegan en `application` y traducen el resultado.
 | `messaging.inbox` | Deduplicación del lado consumidor (`processed_events`) y lectura de mensajes entrantes |
 | `messaging.config` | Topología RabbitMQ declarada por código |
 | `idempotency` | Idempotencia a nivel HTTP para la cabecera `Idempotency-Key` |
-| `shared` | `BaseEntity`, jerarquía de excepciones de dominio, `GlobalExceptionHandler` (errores RFC 9457), `PageResponse` y configuración (OpenAPI, seguridad) |
+| `identity` | Cuentas de usuario (`users`), registro de estudiantes, alta de instructores, login y emisión de JWT |
+| `shared` | `BaseEntity`, jerarquía de excepciones de dominio, `GlobalExceptionHandler` (errores RFC 9457), `PageResponse`, OpenAPI y `shared.security` (filtros, JWT, reglas de acceso) |
 
 Las entidades son modelos ricos: los cambios de estado válidos viven como métodos en la propia entidad
 (`Course.publish()`, `Enrollment.cancel()`, `Payment.confirm()`, ...) y lanzan una excepción de dominio
@@ -57,10 +62,11 @@ respuesta.
 | Recurso | Operaciones |
 |---|---|
 | `/api/categories` | crear, listar, obtener, renombrar (`PUT`), `POST /{id}/archive`, `POST /{id}/activate`, borrar (409 si tiene cursos) |
-| `/api/instructors` | crear (email único), listar, obtener, actualizar perfil, borrar (409 si tiene cursos) |
+| `/api/auth` | `POST /register` (alta pública de estudiante), `POST /token` (login → JWT) |
+| `/api/instructors` | crear instructor y su cuenta (email único), listar, obtener, actualizar perfil, borrar (409 si tiene cursos) |
 | `/api/courses` | crear (en `DRAFT`), buscar, obtener, actualizar, `POST /{id}/publish`, `POST /{id}/archive`, borrar (solo `DRAFT`) |
-| `/api/students` | registrar, listar, obtener |
-| `/api/enrollments` | inscribir (`Idempotency-Key` obligatoria), obtener, `PUT /{id}/progress`, `POST /{id}/cancel` |
+| `/api/students` | listar, obtener |
+| `/api/enrollments` | inscribir (`Idempotency-Key` obligatoria; el estudiante sale del token), obtener, `PUT /{id}/progress`, `POST /{id}/cancel` |
 | `/api/courses/{id}/enrollments` | estudiantes inscritos en un curso |
 | `/api/students/{id}/enrollments` | cursos de un estudiante |
 
@@ -96,6 +102,52 @@ inesperada se registra en el servidor y se devuelve como un 500 genérico.
 El dominio no lanza `IllegalArgumentException` para reglas de negocio: tiene su propia jerarquía de
 excepciones. Así el manejador puede traducir cada caso con precisión sin capturar excepciones genéricas del
 framework, cuyo mensaje podría revelar detalles internos.
+
+## Seguridad
+
+Autenticación con **JWT bearer** emitido por la propia aplicación, sin proveedor de identidad externo:
+
+1. Un estudiante se registra en `POST /api/auth/register`. Los instructores los da de alta un ADMIN desde
+   `POST /api/instructors`, contraseña incluida. El primer ADMIN se crea al arrancar a partir de
+   `ADMIN_EMAIL`/`ADMIN_PASSWORD`.
+2. `POST /api/auth/token` con email y contraseña devuelve un token HS256 firmado con `JWT_SECRET`, válido
+   1 hora. Lleva `sub` (id de usuario), `roles` y, según el rol, `studentId` o `instructorId`.
+3. Cada petición envía `Authorization: Bearer <token>`. La app lo valida como *resource server*: firma,
+   caducidad y emisor `courses-api`.
+
+```bash
+TOKEN=$(curl -s localhost:8080/api/auth/token -H 'Content-Type: application/json' \
+  -d '{"email":"admin@courses.local","password":"dev-only-admin-password"}' | jq -r .accessToken)
+curl localhost:8080/api/students -H "Authorization: Bearer $TOKEN"
+```
+
+**Autorización.** La cadena de filtros solo distingue lo público (login, registro, Swagger, health) de lo
+autenticado. Las reglas de rol y de propiedad van junto a cada endpoint con `@PreAuthorize`, apoyadas en
+`AccessRules` (`@access.ownsEnrollment(...)`, `@access.teachesCourse(...)`), que hace consultas `exists`
+ligeras:
+
+| Rol | Puede |
+|---|---|
+| ADMIN | Todo: gestionar catálogo e instructores, ver cualquier estudiante, inscripción o listado |
+| INSTRUCTOR | Crear cursos a su nombre; editar, publicar, archivar y borrar **sus** cursos; ver las inscripciones de **sus** cursos |
+| STUDENT | Ver el catálogo (solo cursos `PUBLISHED`); inscribirse; ver, actualizar progreso y cancelar **sus** inscripciones |
+
+- Al inscribirse, el estudiante se toma del token y el cuerpo solo lleva `courseId`. Así no es posible
+  inscribir a otra persona.
+- Sobre un recurso ajeno la respuesta es **403 aunque el id no exista**, para no revelar qué ids existen a
+  quien no tiene acceso.
+- 401 (sin token, token inválido o caducado, credenciales incorrectas) y 403 salen como `problem+json`,
+  igual que el resto de errores.
+
+**Contraseñas y secretos.**
+- Las contraseñas se guardan solo como hash BCrypt (`{bcrypt}...`, mediante `DelegatingPasswordEncoder`,
+  que permite migrar de algoritmo más adelante). Nunca se registran en logs.
+- Un login con email inexistente también compara contra un hash de relleno. Así el tiempo de respuesta no
+  revela qué emails tienen cuenta, y los dos casos devuelven el mismo mensaje.
+- `JWT_SECRET` y las credenciales del ADMIN solo llegan por variables de entorno. En `application.yml` no
+  hay ningún valor por defecto para el secreto.
+- La migración `V2__user_accounts.sql` garantiza en la BD que cada rol esté vinculado exactamente a su
+  perfil (estudiante, instructor o ninguno en el caso del ADMIN).
 
 ## Flujo de inscripción
 
@@ -307,7 +359,6 @@ procesar, sácalo de la cola". Son mecanismos independientes y complementarios.
       consumidores y de `Idempotency-Key`, mensaje envenenado a la DLQ
 - [x] Endpoints REST con validación, paginación y OpenAPI; manejo de errores centralizado (ProblemDetail)
 - [x] Tests HTTP end-to-end, de errores y de ausencia de N+1
-- [ ] Seguridad JWT por rol. **Ahora mismo `SecurityConfig` permite todas las peticiones**, de forma
-      provisional, hasta implementar la autenticación
+- [x] Seguridad JWT por rol, con reglas de propiedad por recurso y tests de 401/403
 - [ ] Tests unitarios de casos de uso con dobles de prueba
 - [ ] Observabilidad (métricas de inscripciones/pagos/DLQ, logging con correlación) y `docker-compose` de la app

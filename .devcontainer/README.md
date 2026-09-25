@@ -74,6 +74,7 @@ committed files.
 | `REDIS_HOST` | no | `redis` | Redis host the app connects to |
 | `REDIS_PORT` | no | `6379` | Redis port |
 | `JWT_SECRET` | no | dev-only string | Key the app uses to sign and validate JWTs. For HS256 it must be at least 32 bytes |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | no | `admin@courses.local` / dev-only string | First ADMIN account, created on startup if it doesn't exist |
 | `GITHUB_PERSONAL_ACCESS_TOKEN` | only for the `github` MCP | empty | Authenticates the GitHub MCP server (see below) |
 | `CONTEXT7_API_KEY` | no | empty | Raises the Context7 rate limits for the MCP and the docs pre-fetch (see below) |
 
@@ -101,6 +102,7 @@ Compose builds these from the values above. You don't set them yourself.
 | `SPRING_RABBITMQ_HOST` / `_PORT` / `_USERNAME` / `_PASSWORD` | `rabbitmq`, `5672`, … | Spring AMQP |
 | `SPRING_DATA_REDIS_HOST` / `_PORT` | `redis`, `6379` | Spring Data Redis |
 | `JWT_SECRET` | from `.env` | Your security config (`${JWT_SECRET}` in `application.yml`) |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | from `.env` | Bootstrap admin account (`app.security.admin.*`) |
 | `DATABASE_URI` | `postgresql://courses:courses@postgres:5432/courses` | `postgres` MCP server |
 | `RABBITMQ_MANAGEMENT_URL` | `http://rabbitmq:15672` | Reference for tools and scripts |
 | `GITHUB_PERSONAL_ACCESS_TOKEN`, `CONTEXT7_API_KEY` | from `.env` | MCP servers |
