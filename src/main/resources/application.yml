@@ -24,10 +24,33 @@ spring:
     port: ${SPRING_RABBITMQ_PORT:5672}
     username: ${SPRING_RABBITMQ_USERNAME:courses}
     password: ${SPRING_RABBITMQ_PASSWORD:courses}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+    listener:
+      simple:
+        acknowledge-mode: auto
+        # After the last retry the message is rejected without requeue, so the broker dead-letters it.
+        default-requeue-rejected: false
+        retry:
+          enabled: true
+          max-retries: 3
+          initial-interval: 1s
+          multiplier: 2
+          max-interval: 10s
 
 app:
   jwt:
     secret: ${JWT_SECRET:dev-only-secret-change-me-dev-only-secret-change-me}
+  outbox:
+    poll-interval: 500ms
+    batch-size: 100
+    confirm-timeout: 5s
+  payments:
+    currency: EUR
+    simulation:
+      decline-above: 10000
 
 management:
   endpoints:

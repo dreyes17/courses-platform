@@ -1,4 +1,4 @@
-package com.example.courses.messaging.outbox;
+package com.example.courses.messaging.inbox;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.EmbeddedId;
