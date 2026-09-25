@@ -1,0 +1,54 @@
+# Docs pre-fetched from Context7 into .context7-docs/ (one API request per line).
+# Format: <context7 library id> | <output file, relative to .context7-docs/> | <query>
+# Add a line and re-run `.devcontainer/context7/fetch-docs.py`; existing files are skipped.
+
+# Spring Boot (current = 4.x)
+/websites/spring_io_spring-boot | spring-boot/migration-4.md | Spring Boot 4.0 migration guide: modular starters, renamed modules and properties, Jackson 3
+/websites/spring_io_spring-boot | spring-boot/testcontainers.md | Testcontainers integration tests with @ServiceConnection for PostgreSQL and RabbitMQ
+/websites/spring_io_spring-boot | spring-boot/actuator-health.md | Actuator health endpoint groups, readiness and liveness probes, db and rabbit health indicators
+/websites/spring_io_spring-boot | spring-boot/actuator-metrics.md | Micrometer metrics with Actuator, Prometheus endpoint, custom counters
+/websites/spring_io_spring-boot | spring-boot/tracing-otel.md | Micrometer Tracing with OpenTelemetry, OTLP export, trace and span ids in logs
+/websites/spring_io_spring-boot | spring-boot/structured-logging.md | Structured logging JSON format ECS logstash, MDC correlation id
+/websites/spring_io_spring-boot | spring-boot/rabbitmq.md | RabbitMQ auto-configuration, listener retry properties, Jackson message converter
+/websites/spring_io_spring-boot | spring-boot/flyway-jpa.md | Flyway database migrations and JPA ddl-auto validate configuration
+/websites/spring_io_spring-boot | spring-boot/oauth2-resource-server.md | OAuth2 resource server JWT configuration with a secret key
+/websites/spring_io_spring-boot | spring-boot/virtual-threads.md | Virtual threads spring.threads.virtual.enabled and its effect on Tomcat and listeners
+/websites/spring_io_spring-boot | spring-boot/docker-compose-config.md | Externalized configuration, environment variables, relaxed binding, Docker Compose support
+
+# Spring AMQP
+/websites/spring_io_spring-amqp_reference | spring-amqp/topology.md | Declare topic exchange, queues and bindings as beans with Declarables and QueueBuilder
+/websites/spring_io_spring-amqp_reference | spring-amqp/dead-letter.md | Dead letter exchange and dead letter queue with x-dead-letter-exchange arguments
+/websites/spring_io_spring-amqp_reference | spring-amqp/retry-backoff.md | Listener retry interceptor with exponential backoff and RejectAndDontRequeueRecoverer
+/websites/spring_io_spring-amqp_reference | spring-amqp/json-messages.md | JSON message converter, type mapping, message headers and messageId
+/websites/spring_io_spring-amqp_reference | spring-amqp/publisher-confirms.md | Publisher confirms and returns with RabbitTemplate and CorrelationData
+/websites/spring_io_spring-amqp_reference | spring-amqp/listener-errors.md | @RabbitListener error handling, acknowledge modes, poison messages and requeue behaviour
+
+# Spring Framework 7
+/websites/spring_io_spring-framework_reference | spring-framework/problem-detail.md | ProblemDetail RFC 9457 error responses with @RestControllerAdvice and ResponseEntityExceptionHandler
+/websites/spring_io_spring-framework_reference | spring-framework/transactions.md | @Transactional propagation, isolation, rollback rules and TransactionalEventListener after commit
+/websites/spring_io_spring-framework_reference | spring-framework/resilience.md | Core resilience features @Retryable and @ConcurrencyLimit with backoff
+/websites/spring_io_spring-framework_reference | spring-framework/validation.md | Bean Validation with @Valid and @Validated, method validation and error handling
+
+# Spring Security 7
+/websites/spring_io_spring-security_reference_7_0 | spring-security/jwt-resource-server.md | JWT resource server with NimbusJwtDecoder and NimbusJwtEncoder using an HMAC secret key
+/websites/spring_io_spring-security_reference_7_0 | spring-security/filter-chain.md | SecurityFilterChain stateless API, AuthenticationEntryPoint 401 and AccessDeniedHandler 403
+/websites/spring_io_spring-security_reference_7_0 | spring-security/method-security.md | Method security @PreAuthorize with roles and authorities from JWT claims
+/websites/spring_io_spring-security_reference_7_0 | spring-security/passwords.md | PasswordEncoder BCrypt and DelegatingPasswordEncoder
+
+# Spring Data JPA
+/spring-projects/spring-data-jpa | spring-data-jpa/n-plus-one.md | @EntityGraph and fetch join queries to avoid N+1 with pagination
+/spring-projects/spring-data-jpa | spring-data-jpa/specifications.md | Specifications and dynamic queries with Pageable and Sort
+/spring-projects/spring-data-jpa | spring-data-jpa/locking.md | @Lock pessimistic write, @Version optimistic locking and @Modifying update queries
+
+# Testcontainers
+/testcontainers/testcontainers-java | testcontainers/postgres-rabbitmq.md | PostgreSQLContainer and RabbitMQContainer with JUnit 5 in Testcontainers 2.x
+
+# Spring AI (2.x targets Spring Boot 4) - MCP server bonus
+/websites/spring_io_spring-ai_reference_2_0-snapshot | spring-ai/mcp-server-webmvc.md | MCP server WebMVC starter configuration, streamable HTTP protocol and endpoints
+/websites/spring_io_spring-ai_reference_2_0-snapshot | spring-ai/mcp-tools.md | Exposing MCP tools with @McpTool and @McpToolParam annotations
+
+# springdoc-openapi
+/springdoc/springdoc-openapi | springdoc/setup-security.md | springdoc-openapi setup for Spring Boot, bearer JWT security scheme, Pageable parameters
+
+# Micrometer
+/micrometer-metrics/micrometer | micrometer/meters.md | Counter, Timer and Gauge registration with MeterRegistry and tags

@@ -1,0 +1,32 @@
+{
+  "mcpServers": {
+    "context7": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@4.1.1"],
+      "env": {
+        "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY:-}"
+      }
+    },
+    "postgres": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["--from", "postgres-mcp==0.3.0", "--with", "mcp<2", "postgres-mcp", "--access-mode=unrestricted"],
+      "env": {
+        "DATABASE_URI": "${DATABASE_URI:-postgresql://courses:courses@localhost:5432/courses}"
+      }
+    },
+    "rabbitmq": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["--from", "amq-mcp-server-rabbitmq==4.0.0", "amq-mcp-server-rabbitmq", "--v4", "--allow-mutative-tools"]
+    },
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN:-}"
+      }
+    }
+  }
+}

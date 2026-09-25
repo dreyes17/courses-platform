@@ -1,0 +1,73 @@
+{
+  "name": "Courses platform (Java 21 · Spring Boot 4)",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "dev",
+  "runServices": ["dev", "postgres", "rabbitmq", "redis"],
+  "workspaceFolder": "/workspaces/techlead",
+  "shutdownAction": "stopCompose",
+  "remoteUser": "vscode",
+
+  "features": {
+    // Maven on the PATH to bootstrap the project (`mvn wrapper:wrapper`); afterwards use ./mvnw.
+    "ghcr.io/devcontainers/features/java:1": {
+      "version": "none",
+      "installMaven": "true",
+      "installGradle": "false"
+    },
+    // Private Docker daemon: Testcontainers (PostgreSQL + RabbitMQ) and the app's own
+    // docker compose run here without touching the host's containers or bind-mount paths.
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "moby": "true",
+      "dockerDashComposeVersion": "v2"
+    },
+    // Node for npx-based MCP servers (Context7, MCP Inspector) and Claude Code.
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts"
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1": {}
+  },
+
+  "forwardPorts": [8080, "rabbitmq:15672", "postgres:5432", 6274],
+  "portsAttributes": {
+    "8080": { "label": "Spring Boot app (Swagger UI: /swagger-ui.html)" },
+    "rabbitmq:15672": { "label": "RabbitMQ management UI" },
+    "postgres:5432": { "label": "PostgreSQL", "onAutoForward": "silent" },
+    "6274": { "label": "MCP Inspector" }
+  },
+
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "vscjava.vscode-java-pack",
+        "vmware.vscode-boot-dev-pack",
+        "redhat.vscode-xml",
+        "redhat.vscode-yaml",
+        "ms-azuretools.vscode-containers",
+        "humao.rest-client",
+        "mtxr.sqltools",
+        "mtxr.sqltools-driver-pg",
+        "github.vscode-github-actions",
+        "anthropic.claude-code"
+      ],
+      "settings": {
+        "java.jdt.ls.java.home": "/usr/local/sdkman/candidates/java/current",
+        "java.configuration.updateBuildConfiguration": "automatic",
+        "java.compile.nullAnalysis.mode": "automatic",
+        "sqltools.connections": [
+          {
+            "name": "courses (dev)",
+            "driver": "PostgreSQL",
+            "server": "postgres",
+            "port": 5432,
+            "database": "courses",
+            "username": "courses",
+            "password": "courses"
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,10 @@
+# Local-only config
+.context7-docs/
+.devcontainer/.env
+.claude/settings.local.json
+
+# Build / IDE
+target/
+.idea/
+*.iml
+.DS_Store
