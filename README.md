@@ -23,6 +23,15 @@ docker compose up --build     # PostgreSQL + RabbitMQ + aplicación
   token.
 - `docker compose down -v` lo para todo y borra los volúmenes de datos.
 
+> **Si lanzas `docker compose` desde el devcontainer:** Docker corre *dentro* del devcontainer
+> (Docker-in-Docker), así que los puertos se publican en el `localhost` del contenedor, no en el de tu máquina,
+> y el navegador solo llega a ellos si el editor los reenvía. VS Code lo hace solo con el 8080 porque está en
+> `forwardPorts` de `devcontainer.json`. Otros editores basados en VS Code, como Antigravity, pueden no
+> hacerlo. Si `localhost:8080` no responde, abre la pestaña **Ports** del editor, pulsa **Add Port**, escribe
+> `8080` y usa la dirección de la columna *Forwarded Address*, que puede ser otro puerto si el 8080 ya está
+> ocupado en tu máquina. Haz lo mismo con `15672` para la interfaz de RabbitMQ de este stack. La que VS Code
+> reenvía por defecto (`rabbitmq:15672`) es la RabbitMQ del propio devcontainer, no la de Compose.
+
 Cómo se comporta el despliegue:
 
 - **Secretos:** solo llegan por el entorno o por `.env`. Si falta alguno obligatorio, `docker compose` se
