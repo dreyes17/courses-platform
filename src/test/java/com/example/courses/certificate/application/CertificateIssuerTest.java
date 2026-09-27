@@ -6,6 +6,7 @@ import com.example.courses.enrollment.domain.Enrollment;
 import com.example.courses.enrollment.repository.EnrollmentRepository;
 import com.example.courses.messaging.events.EnrollmentCompleted;
 import com.example.courses.messaging.inbox.IdempotentConsumer;
+import com.example.courses.shared.observability.BusinessMetrics;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -36,6 +37,8 @@ class CertificateIssuerTest {
     private EnrollmentRepository enrollments;
     @Mock
     private IdempotentConsumer idempotentConsumer;
+    @Mock
+    private BusinessMetrics metrics;
     @InjectMocks
     private CertificateIssuer issuer;
 
@@ -53,6 +56,7 @@ class CertificateIssuerTest {
         verify(certificates).save(certificate.capture());
         assertThat(certificate.getValue().getEnrollment()).isSameAs(enrollment);
         assertThat(certificate.getValue().getCode()).matches("CERT-[0-9A-F]{16}");
+        verify(metrics).certificateIssued();
     }
 
     @Test
@@ -64,6 +68,7 @@ class CertificateIssuerTest {
         issuer.onEnrollmentCompleted(EVENT_ID, completed(enrollment));
 
         verify(certificates, never()).save(any());
+        verifyNoInteractions(metrics);
     }
 
     @Test

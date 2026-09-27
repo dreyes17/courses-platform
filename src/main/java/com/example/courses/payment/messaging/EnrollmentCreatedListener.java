@@ -21,7 +21,7 @@ class EnrollmentCreatedListener {
 
     @RabbitListener(queues = RabbitTopology.PAYMENT_PROCESSING_QUEUE)
     void onEnrollmentCreated(Message message) {
-        var event = reader.read(message, EnrollmentCreated.class);
-        paymentProcessor.process(event.eventId(), event.payload());
+        reader.consume(message, EnrollmentCreated.class,
+                event -> paymentProcessor.process(event.eventId(), event.payload()));
     }
 }

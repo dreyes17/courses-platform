@@ -18,4 +18,6 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> 
                for update skip locked
             """, nativeQuery = true)
     List<OutboxEvent> lockNextPending(@Param("limit") int limit);
+
+    long countByStatus(OutboxStatus status);
 }

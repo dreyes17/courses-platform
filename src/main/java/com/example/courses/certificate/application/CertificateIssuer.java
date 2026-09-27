@@ -7,6 +7,7 @@ import com.example.courses.enrollment.repository.EnrollmentRepository;
 import com.example.courses.messaging.events.EnrollmentCompleted;
 import com.example.courses.messaging.inbox.IdempotentConsumer;
 import com.example.courses.shared.application.ResourceNotFoundException;
+import com.example.courses.shared.observability.BusinessMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -24,12 +25,14 @@ public class CertificateIssuer {
     private final CertificateRepository certificates;
     private final EnrollmentRepository enrollments;
     private final IdempotentConsumer idempotentConsumer;
+    private final BusinessMetrics metrics;
 
     public CertificateIssuer(CertificateRepository certificates, EnrollmentRepository enrollments,
-                             IdempotentConsumer idempotentConsumer) {
+                             IdempotentConsumer idempotentConsumer, BusinessMetrics metrics) {
         this.certificates = certificates;
         this.enrollments = enrollments;
         this.idempotentConsumer = idempotentConsumer;
+        this.metrics = metrics;
     }
 
     @Transactional
@@ -44,6 +47,7 @@ public class CertificateIssuer {
         Enrollment enrollment = enrollments.findById(event.enrollmentId())
                 .orElseThrow(() -> new ResourceNotFoundException("Enrollment", event.enrollmentId()));
         Certificate certificate = certificates.save(Certificate.issueFor(enrollment));
+        metrics.certificateIssued();
         log.info("Issued certificate {} for enrollment {}", certificate.getCode(), enrollment.getId());
     }
 }

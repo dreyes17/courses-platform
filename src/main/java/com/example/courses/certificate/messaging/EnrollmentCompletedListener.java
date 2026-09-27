@@ -21,7 +21,7 @@ class EnrollmentCompletedListener {
 
     @RabbitListener(queues = RabbitTopology.CERTIFICATE_ISSUING_QUEUE)
     void onEnrollmentCompleted(Message message) {
-        var event = reader.read(message, EnrollmentCompleted.class);
-        certificateIssuer.onEnrollmentCompleted(event.eventId(), event.payload());
+        reader.consume(message, EnrollmentCompleted.class,
+                event -> certificateIssuer.onEnrollmentCompleted(event.eventId(), event.payload()));
     }
 }

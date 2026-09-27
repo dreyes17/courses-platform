@@ -78,3 +78,14 @@ management:
         enabled: true
       # Safe because the management port is never published outside the deployment network.
       show-details: always
+      group:
+        # Not ready to take traffic without its database or broker; liveness stays internal-only so a
+        # dependency outage doesn't make the orchestrator restart a healthy process.
+        readiness:
+          include: readinessState,db,rabbit
+
+logging:
+  # Plain-text logs show the correlation id of the flow; JSON logs (logging.structured.format.console=ecs,
+  # enabled in docker-compose.yml) include it as a field automatically.
+  pattern:
+    correlation: "[%X{correlationId:-}] "

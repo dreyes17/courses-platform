@@ -15,6 +15,8 @@ import com.example.courses.messaging.outbox.OutboxRecorder;
 import com.example.courses.payment.domain.Payment;
 import com.example.courses.payment.repository.PaymentRepository;
 import com.example.courses.shared.application.ResourceNotFoundException;
+import com.example.courses.shared.observability.BusinessMetrics;
+import com.example.courses.shared.observability.BusinessMetrics.EnrollmentRejection;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
@@ -43,11 +45,13 @@ public class EnrollmentService {
     private final OutboxRecorder outbox;
     private final IdempotentRequests idempotentRequests;
     private final JsonMapper jsonMapper;
+    private final BusinessMetrics metrics;
     private final String currency;
 
     public EnrollmentService(StudentRepository students, CourseRepository courses, EnrollmentRepository enrollments,
                              PaymentRepository payments, OutboxRecorder outbox, IdempotentRequests idempotentRequests,
-                             JsonMapper jsonMapper, @Value("${app.payments.currency:EUR}") String currency) {
+                             JsonMapper jsonMapper, BusinessMetrics metrics,
+                             @Value("${app.payments.currency:EUR}") String currency) {
         this.students = students;
         this.courses = courses;
         this.enrollments = enrollments;
@@ -55,6 +59,7 @@ public class EnrollmentService {
         this.outbox = outbox;
         this.idempotentRequests = idempotentRequests;
         this.jsonMapper = jsonMapper;
+        this.metrics = metrics;
         this.currency = currency;
     }
 
@@ -115,6 +120,20 @@ public class EnrollmentService {
     }
 
     private EnrollmentView enrollNow(UUID studentId, UUID courseId) {
+        try {
+            EnrollmentView enrollment = reserveSeatAndEnroll(studentId, courseId);
+            metrics.enrollmentCreated();
+            return enrollment;
+        } catch (CourseFullException e) {
+            metrics.enrollmentRejected(EnrollmentRejection.COURSE_FULL);
+            throw e;
+        } catch (AlreadyEnrolledException e) {
+            metrics.enrollmentRejected(EnrollmentRejection.ALREADY_ENROLLED);
+            throw e;
+        }
+    }
+
+    private EnrollmentView reserveSeatAndEnroll(UUID studentId, UUID courseId) {
         if (enrollments.existsByCourseIdAndStudentIdAndStatusIn(courseId, studentId, BLOCKING_STATUSES)) {
             throw new AlreadyEnrolledException(studentId, courseId);
         }

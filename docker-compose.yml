@@ -56,6 +56,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET (at least 32 bytes) in .env}
       ADMIN_EMAIL: ${ADMIN_EMAIL:?set ADMIN_EMAIL in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
+      # One JSON object per log line (Elastic Common Schema), ready for a log collector.
+      LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
     ports:
       - "8080:8080"   # API only
     # Actuator (health, info, prometheus) on 8081: reachable by other containers in this network

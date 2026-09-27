@@ -18,6 +18,8 @@ import com.example.courses.payment.domain.PaymentStatus;
 import com.example.courses.payment.repository.PaymentRepository;
 import com.example.courses.shared.application.ResourceNotFoundException;
 import com.example.courses.shared.domain.InvalidStateTransitionException;
+import com.example.courses.shared.observability.BusinessMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -64,13 +66,14 @@ class EnrollmentServiceTest {
     private IdempotentRequests idempotentRequests;
 
     private EnrollmentService service;
+    private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     private final Student student = student();
     private final Course course = publishedCourse(10, new BigDecimal("49.90"));
 
     @BeforeEach
     void setUp() {
         service = new EnrollmentService(students, courses, enrollments, payments, outbox, idempotentRequests,
-                JsonMapper.builder().build(), "EUR");
+                JsonMapper.builder().build(), new BusinessMetrics(meterRegistry), "EUR");
     }
 
     @Test
@@ -91,6 +94,7 @@ class EnrollmentServiceTest {
         assertThat(payment.getValue().getStatus()).isEqualTo(PaymentStatus.PENDING);
         assertThat(payment.getValue().getAmount()).isEqualByComparingTo("49.90");
         assertThat(payment.getValue().getIdempotencyKey()).isEqualTo("enrollment-" + view.id());
+        assertThat(enrollments("created")).isEqualTo(1);
         var event = ArgumentCaptor.forClass(DomainEvent.class);
         verify(outbox).record(event.capture());
         assertThat(event.getValue()).isInstanceOfSatisfying(EnrollmentCreated.class, created -> {
@@ -109,6 +113,7 @@ class EnrollmentServiceTest {
                 .isInstanceOf(AlreadyEnrolledException.class);
         verify(courses, never()).tryReserveSeat(any());
         verifyNoInteractions(outbox);
+        assertThat(enrollments("already_enrolled")).isEqualTo(1);
     }
 
     @Test
@@ -122,6 +127,8 @@ class EnrollmentServiceTest {
                 .isInstanceOf(CourseFullException.class);
         verify(enrollments, never()).saveAndFlush(any());
         verifyNoInteractions(payments, outbox);
+        assertThat(enrollments("course_full")).isEqualTo(1);
+        assertThat(enrollments("created")).isZero();
     }
 
     @Test
@@ -202,6 +209,10 @@ class EnrollmentServiceTest {
 
         assertThat(view.status()).isEqualTo(EnrollmentStatus.CANCELLED);
         verify(courses).releaseSeat(enrollment.getCourse().getId());
+    }
+
+    private double enrollments(String outcome) {
+        return meterRegistry.get("courses.enrollments").tag("outcome", outcome).counter().count();
     }
 
     private void givenNotEnrolled() {

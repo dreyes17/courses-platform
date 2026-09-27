@@ -2,6 +2,7 @@ package com.example.courses.messaging.outbox;
 
 import com.example.courses.messaging.config.RabbitTopology;
 import com.example.courses.messaging.events.EventType;
+import com.example.courses.shared.observability.CorrelationId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.Message;
@@ -52,7 +53,7 @@ public class OutboxRelay {
     public void publishPending() {
         transactionTemplate.executeWithoutResult(status -> {
             for (OutboxEvent event : outboxEvents.lockNextPending(batchSize)) {
-                if (!publish(event)) {
+                if (!CorrelationId.callWith(event.getCorrelationId(), () -> publish(event))) {
                     return;
                 }
             }
@@ -87,7 +88,7 @@ public class OutboxRelay {
     }
 
     private static Message toMessage(OutboxEvent event) {
-        return MessageBuilder.withBody(event.getPayload().getBytes(StandardCharsets.UTF_8))
+        var message = MessageBuilder.withBody(event.getPayload().getBytes(StandardCharsets.UTF_8))
                 .setContentType(MessageProperties.CONTENT_TYPE_JSON)
                 .setContentEncoding(StandardCharsets.UTF_8.name())
                 .setMessageId(event.getId().toString())
@@ -96,7 +97,10 @@ public class OutboxRelay {
                 .setTimestamp(Date.from(event.getCreatedAt()))
                 .setHeader(EVENT_VERSION_HEADER, EventType.CURRENT_VERSION)
                 .setHeader("x-aggregate-type", event.getAggregateType())
-                .setDeliveryMode(MessageDeliveryMode.PERSISTENT)
-                .build();
+                .setDeliveryMode(MessageDeliveryMode.PERSISTENT);
+        if (event.getCorrelationId() != null) {
+            message.setHeader(CorrelationId.AMQP_HEADER, event.getCorrelationId());
+        }
+        return message.build();
     }
 }

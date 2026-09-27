@@ -15,6 +15,7 @@ import org.springframework.context.annotation.Configuration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Configuration(proxyBeanMethods = false)
 public class RabbitTopology {
@@ -34,6 +35,10 @@ public class RabbitTopology {
             ENROLLMENT_ACTIVATION_QUEUE, EventType.PAYMENT_CONFIRMED,
             ENROLLMENT_PAYMENT_FAILED_QUEUE, EventType.PAYMENT_FAILED,
             CERTIFICATE_ISSUING_QUEUE, EventType.ENROLLMENT_COMPLETED);
+
+    public static Set<String> consumerQueues() {
+        return QUEUE_SUBSCRIPTIONS.keySet();
+    }
 
     @Bean
     Declarables coursesTopology() {

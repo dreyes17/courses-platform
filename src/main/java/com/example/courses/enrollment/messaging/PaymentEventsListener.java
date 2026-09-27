@@ -22,13 +22,13 @@ class PaymentEventsListener {
 
     @RabbitListener(queues = RabbitTopology.ENROLLMENT_ACTIVATION_QUEUE)
     void onPaymentConfirmed(Message message) {
-        var event = reader.read(message, PaymentConfirmed.class);
-        paymentOutcomes.onPaymentConfirmed(event.eventId(), event.payload());
+        reader.consume(message, PaymentConfirmed.class,
+                event -> paymentOutcomes.onPaymentConfirmed(event.eventId(), event.payload()));
     }
 
     @RabbitListener(queues = RabbitTopology.ENROLLMENT_PAYMENT_FAILED_QUEUE)
     void onPaymentFailed(Message message) {
-        var event = reader.read(message, PaymentFailed.class);
-        paymentOutcomes.onPaymentFailed(event.eventId(), event.payload());
+        reader.consume(message, PaymentFailed.class,
+                event -> paymentOutcomes.onPaymentFailed(event.eventId(), event.payload()));
     }
 }

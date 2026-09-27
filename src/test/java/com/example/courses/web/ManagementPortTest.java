@@ -52,6 +52,14 @@ class ManagementPortTest {
     }
 
     @Test
+    void readinessDependsOnTheDatabaseAndTheBroker() throws Exception {
+        HttpResponse<String> response = get(managementPort, "/actuator/health/readiness");
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body()).contains("\"db\"", "\"rabbit\"", "\"readinessState\"");
+    }
+
+    @Test
     void actuatorIsNotServedOnTheApiPort() throws Exception {
         assertThat(get(apiPort, "/actuator/prometheus").statusCode()).isNotEqualTo(200);
         assertThat(get(apiPort, "/actuator/health").statusCode()).isNotEqualTo(200);

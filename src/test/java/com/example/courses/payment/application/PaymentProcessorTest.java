@@ -10,6 +10,7 @@ import com.example.courses.messaging.outbox.OutboxRecorder;
 import com.example.courses.payment.domain.Payment;
 import com.example.courses.payment.domain.PaymentStatus;
 import com.example.courses.payment.repository.PaymentRepository;
+import com.example.courses.shared.observability.BusinessMetrics;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,6 +44,8 @@ class PaymentProcessorTest {
     private OutboxRecorder outbox;
     @Mock
     private IdempotentConsumer idempotentConsumer;
+    @Mock
+    private BusinessMetrics metrics;
     @InjectMocks
     private PaymentProcessor processor;
 
@@ -65,6 +68,7 @@ class PaymentProcessorTest {
         processor.process(EVENT_ID, event());
 
         assertThat(payment.getStatus()).isEqualTo(PaymentStatus.CONFIRMED);
+        verify(metrics).paymentConfirmed();
         assertThat(recordedEvent()).isInstanceOfSatisfying(PaymentConfirmed.class,
                 confirmed -> assertThat(confirmed.enrollmentId()).isEqualTo(enrollment.getId()));
     }
@@ -78,6 +82,7 @@ class PaymentProcessorTest {
         processor.process(EVENT_ID, event());
 
         assertThat(payment.getStatus()).isEqualTo(PaymentStatus.FAILED);
+        verify(metrics).paymentFailed();
         assertThat(recordedEvent()).isInstanceOfSatisfying(PaymentFailed.class,
                 failed -> assertThat(failed.reason()).isEqualTo("insufficient funds"));
     }
@@ -101,7 +106,7 @@ class PaymentProcessorTest {
 
         processor.process(EVENT_ID, event());
 
-        verifyNoInteractions(payments, gateway, outbox);
+        verifyNoInteractions(payments, gateway, outbox, metrics);
     }
 
     @Test

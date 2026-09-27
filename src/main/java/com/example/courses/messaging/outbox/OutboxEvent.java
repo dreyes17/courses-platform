@@ -40,20 +40,26 @@ public class OutboxEvent extends BaseEntity {
     @Column(name = "published_at")
     private Instant publishedAt;
 
+    @Column(name = "correlation_id", length = 100)
+    private String correlationId;
+
     protected OutboxEvent() {
     }
 
-    private OutboxEvent(String aggregateType, UUID aggregateId, String eventType, String payload) {
+    private OutboxEvent(String aggregateType, UUID aggregateId, String eventType, String payload,
+                        String correlationId) {
         this.aggregateType = Objects.requireNonNull(aggregateType, "aggregateType");
         this.aggregateId = Objects.requireNonNull(aggregateId, "aggregateId");
         this.eventType = Objects.requireNonNull(eventType, "eventType");
         this.payload = Objects.requireNonNull(payload, "payload");
         this.status = OutboxStatus.PENDING;
         this.createdAt = Instant.now();
+        this.correlationId = correlationId;
     }
 
-    public static OutboxEvent record(String aggregateType, UUID aggregateId, String eventType, String payloadJson) {
-        return new OutboxEvent(aggregateType, aggregateId, eventType, payloadJson);
+    public static OutboxEvent record(String aggregateType, UUID aggregateId, String eventType, String payloadJson,
+                                     String correlationId) {
+        return new OutboxEvent(aggregateType, aggregateId, eventType, payloadJson, correlationId);
     }
 
     public void markPublished() {
@@ -94,5 +100,9 @@ public class OutboxEvent extends BaseEntity {
 
     public Instant getPublishedAt() {
         return publishedAt;
+    }
+
+    public String getCorrelationId() {
+        return correlationId;
     }
 }
