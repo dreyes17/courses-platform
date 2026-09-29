@@ -168,8 +168,8 @@ adaptadores finos: validan o leen la entrada, delegan en `application` y traduce
 |---|---|
 | `catalog` | Categorías, instructores y cursos — CRUD, publicar/archivar, búsqueda combinable (`CourseSpecifications`) y reserva atómica de plazas (`CourseRepository.tryReserveSeat`) |
 | `enrollment` | Estudiantes e inscripciones — máquina de estados `PENDING_PAYMENT → ACTIVE → COMPLETED` / `CANCELLED`; `EnrollmentService` (inscribir, progreso, cancelar, listados) y `PaymentOutcomeHandler` (reacción a `PaymentConfirmed`/`PaymentFailed`) |
-| `payment` | Pagos — `PENDING → CONFIRMED` / `FAILED`; `PaymentProcessor` consume `EnrollmentCreated` y cobra contra una pasarela simulada |
-| `certificate` | `CertificateIssuer` consume `EnrollmentCompleted` y emite el certificado |
+| `payment` | Pagos — `PENDING → CONFIRMED` / `FAILED`; `PaymentProcessor` consume `EnrollmentCreated` y cobra contra una pasarela simulada; `PaymentService` expone el pago de una inscripción, con el motivo si falló |
+| `certificate` | `CertificateIssuer` consume `EnrollmentCompleted` y emite el certificado; `CertificateService` lo expone a su estudiante y permite verificar un código públicamente |
 | `messaging.events` | Contrato de eventos: `sealed interface DomainEvent` + un `record` por evento, y `EventType` (nombre, routing key, versión) |
 | `messaging.outbox` | `OutboxRecorder` (escribe eventos en la transacción de negocio) y `OutboxRelay` (los publica en RabbitMQ) |
 | `messaging.inbox` | Deduplicación del lado consumidor (`processed_events`) y lectura de mensajes entrantes |
@@ -216,7 +216,7 @@ protegidas igual: viven en los métodos de las entidades y se refuerzan en la BD
   intercambiable (`SimulatedPaymentGateway`). Pasar a una pasarela real consiste en añadir otro adaptador,
   sin tocar `PaymentProcessor`.
 - **Los adaptadores de entrada** (controladores en `web`, listeners en `messaging`) solo traducen HTTP o
-  AMQP y delegan. Así se añadió el servidor MCP: `catalog.mcp` y `enrollment.mcp` son otro adaptador de
+  AMQP y delegan. Así se añadió el servidor MCP: los paquetes `mcp` de cada contexto son otro adaptador de
   entrada sobre los mismos casos de uso, sin cambiar ninguno.
 - **El contrato de eventos** (`messaging.events`) es independiente de las entidades, así que el formato
   publicado no cambia al refactorizar el modelo interno.
@@ -230,7 +230,8 @@ específica ante una transición inválida, en vez de exponer setters y dejar la
 
 ### Mapeo entidad → vista (MapStruct)
 
-Cada contexto tiene un mapper, `CatalogViewMapper` y `EnrollmentViewMapper`, que convierte las entidades en
+Cada contexto tiene un mapper (`CatalogViewMapper`, `EnrollmentViewMapper`, `PaymentViewMapper` y
+`CertificateViewMapper`) que convierte las entidades en
 las vistas `record` que devuelven los casos de uso. MapStruct genera su implementación al compilar: es código
 Java normal, sin reflexión en ejecución, y se puede leer en `target/generated-sources/annotations`.
 
@@ -261,10 +262,13 @@ y en la especificación OpenAPI (`/v3/api-docs`).
 |---|---|---|
 | `/api/categories` | crear, listar, obtener, renombrar (`PUT`), `POST /{id}/archive`, `POST /{id}/activate`, borrar (409 si tiene cursos) | `name`, `status` |
 | `/api/auth` | `POST /register` (alta pública de estudiante), `POST /token` (login → JWT) | — |
-| `/api/instructors` | crear instructor y su cuenta (email único), listar, obtener, actualizar perfil, borrar (409 si tiene cursos) | `name`, `email` |
+| `/api/instructors` | crear instructor y su cuenta (email único), listar, obtener, actualizar perfil, borrar junto con su cuenta (409 si tiene cursos) | `name`, `email` |
 | `/api/courses` | crear (en `DRAFT`), buscar, buscar con cursor (`GET /scroll`), obtener, actualizar, `POST /{id}/publish`, `POST /{id}/archive`, borrar (solo `DRAFT`) | ver *Búsqueda de cursos*, abajo |
 | `/api/students` | listar, obtener | `name` (nombre o apellido), `email` |
-| `/api/enrollments` | inscribir (`Idempotency-Key` obligatoria; el estudiante sale del token), obtener, `PUT /{id}/progress`, `POST /{id}/cancel` | — |
+| `/api/enrollments` | inscribir (`Idempotency-Key` obligatoria; el estudiante sale del token), listar todas (solo ADMIN), obtener, `PUT /{id}/progress`, `POST /{id}/cancel` | `courseId`, `studentId`, `status` |
+| `/api/enrollments/{id}/payment` | pago de la inscripción: importe, estado y, si falló, `failureReason` (el porqué de una inscripción `CANCELLED` por el cobro) | — |
+| `/api/enrollments/{id}/certificate` | certificado de una inscripción `COMPLETED`, con su código verificable (404 mientras no se haya emitido) | — |
+| `/api/certificates/{code}` | verificación **pública**, sin token: titular, curso y fecha de emisión | — |
 | `/api/courses/{id}/enrollments` | estudiantes inscritos en un curso | `status` |
 | `/api/students/{id}/enrollments` | cursos de un estudiante | `status` |
 
@@ -275,7 +279,7 @@ altas, `204` en los borrados) y todos sus errores, con el cuerpo `application/pr
 | Error | Cuándo se documenta |
 |---|---|
 | 400 | la operación recibe cuerpo o parámetros |
-| 401 | necesita token (todas salvo login y registro) |
+| 401 | necesita token (todas salvo login, registro y verificación de certificados) |
 | 403 | tiene una regla de rol o de propiedad (`@PreAuthorize`) |
 | 404 | direcciona un recurso por id en la ruta |
 
@@ -298,11 +302,20 @@ con otra petición*. `ApiDocumentationTest` comprueba que cada operación tiene 
   [Rate limiting](#rate-limiting)).
 - **Búsqueda de cursos.** Todos los filtros son opcionales y combinables: `categoryId`, `level`, `minPrice`,
   `maxPrice`, `title` (subcadena sin distinguir mayúsculas) y `withAvailableSeats=true`, además de `status`.
+- **Visibilidad de los cursos.** ADMIN ve todos; un INSTRUCTOR, los `PUBLISHED` y los suyos en cualquier estado;
+  un STUDENT, solo los `PUBLISHED`. Se aplica igual en la búsqueda, el cursor, `GET /api/courses/{id}` y las
+  tools MCP (`CourseVisibility`). Un borrador ajeno responde 404, no 403, para no revelar que existe, y el filtro
+  `status` se combina con esta regla: un STUDENT que pide `status=DRAFT` recibe una lista vacía.
 - **Correlación.** Cualquier petición puede enviar `X-Correlation-Id` (si no, se genera uno), y la respuesta
   siempre lo devuelve. Sirve para localizar en los logs todo lo que provocó esa petición (ver
   [Observabilidad](#observabilidad)).
-- **Sin N+1 en los listados relacionales.** Cursos con su categoría e instructor, estudiantes de un curso y
-  cursos de un estudiante se cargan con `@EntityGraph` sobre relaciones *to-one*, así que la paginación
+- **Certificados verificables.** El código (`CERT-` + 16 caracteres hexadecimales aleatorios, 64 bits) es lo que
+  el estudiante enseña, por ejemplo a una empresa, y `GET /api/certificates/{code}` lo confirma sin cuenta.
+  Devuelve solo lo que muestra el propio certificado (titular, curso, fecha), sin ids ni email. El código no
+  se puede adivinar por fuerza bruta.
+- **Sin N+1 en los listados relacionales.** Cursos con su categoría e instructor, estudiantes de un curso,
+  cursos de un estudiante y el listado global de inscripciones (estudiante y curso) se cargan con
+  `@EntityGraph` sobre relaciones *to-one*, así que la paginación
   sigue haciéndose en SQL. `QueryEfficiencyTest` cuenta las sentencias SQL del hilo: cada página cuesta como
   máximo 2 consultas, sea cual sea su tamaño.
 
@@ -378,16 +391,18 @@ TOKEN=$(curl -s localhost:8080/api/auth/token -H 'Content-Type: application/json
 curl localhost:8080/api/students -H "Authorization: Bearer $TOKEN"
 ```
 
-**Autorización.** La cadena de filtros de la API solo distingue lo público (login, registro, Swagger) de lo
+**Autorización.** La cadena de filtros de la API solo distingue lo público (login, registro, verificación de
+certificados, Swagger) de lo
 autenticado. Las reglas de rol y de propiedad van junto a cada endpoint con `@PreAuthorize`, apoyadas en
 `AccessRules` (`@access.ownsEnrollment(...)`, `@access.teachesCourse(...)`), que hace consultas `exists`
 ligeras:
 
 | Rol | Puede |
 |---|---|
-| ADMIN | Todo: gestionar catálogo e instructores, ver cualquier estudiante, inscripción o listado |
-| INSTRUCTOR | Crear cursos a su nombre; editar, publicar, archivar y borrar **sus** cursos; ver las inscripciones de **sus** cursos |
-| STUDENT | Ver el catálogo (solo cursos `PUBLISHED`); inscribirse, lo que inicia el pago (ver [Flujo de inscripción](#flujo-de-inscripción)); ver, actualizar progreso y cancelar **sus** inscripciones |
+| ADMIN | Todo: gestionar catálogo e instructores, ver cualquier estudiante, inscripción, pago, certificado o listado, incluido el listado global de inscripciones (`GET /api/enrollments`) |
+| INSTRUCTOR | Ver el catálogo publicado y **sus** cursos en cualquier estado (no los borradores de otros); crear cursos a su nombre; editar, publicar, archivar y borrar **sus** cursos; ver las inscripciones y los certificados de **sus** cursos |
+| STUDENT | Ver el catálogo (solo cursos `PUBLISHED`); inscribirse, lo que inicia el pago (ver [Flujo de inscripción](#flujo-de-inscripción)); ver, actualizar progreso y cancelar **sus** inscripciones, y ver su pago y su certificado |
+| Sin cuenta | Verificar un certificado por su código |
 
 - Al inscribirse, el estudiante se toma del token y el cuerpo solo lleva `courseId`. Así no es posible
   inscribir a otra persona.
@@ -683,6 +698,12 @@ publica `PaymentConfirmed` o `PaymentFailed` (7.1). Aquí se resuelve así:
 - **Cómo probar el rechazo.** La pasarela simulada aprueba cualquier importe hasta
   `app.payments.simulation.decline-above` (10 000 por defecto) y rechaza los superiores. Un curso con un precio
   mayor recorre la rama `PaymentFailed`: la inscripción se cancela y la plaza se libera.
+- **Cómo lo ve el cliente.** `GET /api/enrollments/{id}` muestra el estado de la inscripción, y
+  `GET /api/enrollments/{id}/payment` el del pago. Si el cobro falló, el pago lleva `failureReason` con el
+  motivo, que se guarda en `payments.failure_reason` (`V6__payment_failure_reason.sql`; una restricción `CHECK`
+  exige que exista exactamente cuando el estado es `FAILED`). Así una inscripción `CANCELLED` no queda sin
+  explicación. Al completarse, `GET /api/enrollments/{id}/certificate` devuelve el certificado en cuanto
+  `CertificateIssuer` lo emite (hasta entonces responde 404).
 
 ## Concurrencia: reserva de plazas
 
@@ -861,7 +882,8 @@ mismos permisos que su token.
 
 **Dependencia:** `org.springframework.ai:spring-ai-starter-mcp-server-webmvc`, el starter oficial que pide
 el enunciado, en Spring AI 2.0.1 (compatible con Spring Boot 4). Las tools son métodos anotados con
-`@McpTool` y `@McpToolParam` en `catalog.mcp.CatalogTools` y `enrollment.mcp.EnrollmentTools`.
+`@McpTool` y `@McpToolParam` en `catalog.mcp.CatalogTools`, `catalog.mcp.InstructorTools`,
+`enrollment.mcp.EnrollmentTools`, `payment.mcp.PaymentTools` y `certificate.mcp.CertificateTools`.
 
 **Cómo está hecho:**
 
@@ -870,7 +892,8 @@ el enunciado, en Spring AI 2.0.1 (compatible con Spring Boot 4). Las tools son m
   No hay lógica ni datos propios del MCP.
 - **Mismo token, mismos permisos.** `/mcp` está protegido por la cadena de seguridad de la API: sin
   `Authorization: Bearer` responde 401, y cada tool se ejecuta con los permisos de ese token. Por ejemplo, un
-  STUDENT no puede usar `create_category` y solo ve cursos `PUBLISHED`.
+  STUDENT no puede usar `create_category` y solo ve cursos `PUBLISHED`, y un INSTRUCTOR no ve los borradores
+  de otros instructores.
 - **Sin estado (`protocol: STATELESS`).** Cada llamada es una petición HTTP independiente, como en la API
   REST: cualquier instancia puede atenderla y no hay sesión MCP que guardar. Además, así la tool se ejecuta
   en el hilo de la petición, con su contexto de seguridad.
@@ -889,16 +912,31 @@ y `size` va de 1 a 100 (20 por defecto).
 | `list_categories` | Lista las categorías por orden alfabético | `name?`, `status?`, `page?`, `size?` | cualquier usuario |
 | `get_category` | Devuelve una categoría | `categoryId` | cualquier usuario |
 | `create_category` | Crea una categoría (nombre único) | `name`, `description?` | ADMIN |
-| `list_courses` | Lista los cursos, del más reciente al más antiguo | `page?`, `size?` | cualquier usuario (un STUDENT solo ve `PUBLISHED`) |
-| `search_courses` | Busca cursos con filtros combinables | `categoryId?`, `level?`, `minPrice?`, `maxPrice?`, `title?`, `withAvailableSeats?`, `status?`, `page?`, `size?` | cualquier usuario (un STUDENT solo ve `PUBLISHED`) |
-| `get_course` | Devuelve un curso con sus plazas libres | `courseId` | cualquier usuario (un STUDENT solo ve `PUBLISHED`) |
+| `update_category` | Renombra una categoría o cambia su descripción | `categoryId`, `name`, `description?` | ADMIN |
+| `archive_category` | Archiva una categoría: no admite cursos nuevos; los que tiene se conservan | `categoryId` | ADMIN |
+| `activate_category` | Reactiva una categoría archivada | `categoryId` | ADMIN |
+| `delete_category` | Borra una categoría sin cursos (si tiene, hay que archivarla) | `categoryId` | ADMIN |
+| `list_courses` | Lista los cursos, del más reciente al más antiguo | `page?`, `size?` | cualquier usuario (ADMIN ve todos; un INSTRUCTOR, los `PUBLISHED` y los suyos; un STUDENT, solo `PUBLISHED`) |
+| `search_courses` | Busca cursos con filtros combinables | `categoryId?`, `level?`, `minPrice?`, `maxPrice?`, `title?`, `withAvailableSeats?`, `status?`, `page?`, `size?` | cualquier usuario (ADMIN ve todos; un INSTRUCTOR, los `PUBLISHED` y los suyos; un STUDENT, solo `PUBLISHED`) |
+| `get_course` | Devuelve un curso con sus plazas libres | `courseId` | cualquier usuario (ADMIN ve todos; un INSTRUCTOR, los `PUBLISHED` y los suyos; un STUDENT, solo `PUBLISHED`) |
 | `create_course` | Crea un curso en `DRAFT` | `title`, `description?`, `durationHours`, `level`, `price`, `capacity`, `categoryId`, `instructorId` | ADMIN, o el INSTRUCTOR que lo imparte |
 | `publish_course` | Publica un curso `DRAFT` | `courseId` | ADMIN o el instructor del curso |
+| `update_course` | Cambia los datos de un curso (el aforo no puede quedar por debajo de las plazas ocupadas) | `courseId`, `title`, `description?`, `durationHours`, `level`, `price`, `capacity` | ADMIN o el instructor del curso |
 | `archive_course` | Archiva un curso: deja de aceptar inscripciones | `courseId` | ADMIN o el instructor del curso |
+| `delete_course` | Borra un curso `DRAFT` (uno publicado solo se puede archivar) | `courseId` | ADMIN o el instructor del curso |
+| `create_instructor` | Crea un instructor y su cuenta de acceso (email único) | `name`, `email`, `bio?`, `password` | ADMIN |
+| `list_instructors` | Lista los instructores por orden alfabético | `name?`, `email?`, `page?`, `size?` | ADMIN |
+| `get_instructor` | Devuelve un instructor | `instructorId` | ADMIN o el propio instructor |
+| `update_instructor` | Cambia el nombre y la biografía (el email no cambia) | `instructorId`, `name`, `bio?` | ADMIN o el propio instructor |
+| `delete_instructor` | Borra un instructor sin cursos junto con su cuenta | `instructorId` | ADMIN |
 | `list_students` | Lista los estudiantes | `name?`, `email?`, `page?`, `size?` | ADMIN |
 | `get_student` | Devuelve un estudiante | `studentId` | ADMIN o el propio estudiante |
 | `enroll_student` | Inscribe al estudiante del token: reserva plaza y crea el pago, y devuelve `PENDING_PAYMENT` | `courseId`, `idempotencyKey` | STUDENT |
+| `list_enrollments` | Lista todas las inscripciones, de la más reciente a la más antigua, con estudiante y curso | `courseId?`, `studentId?`, `status?`, `page?`, `size?` | ADMIN |
 | `get_enrollment` | Devuelve el estado y el progreso de una inscripción | `enrollmentId` | ADMIN, su estudiante o el instructor del curso |
+| `get_enrollment_payment` | Devuelve el pago de una inscripción, con `failureReason` si falló | `enrollmentId` | ADMIN o su estudiante |
+| `get_enrollment_certificate` | Devuelve el certificado de una inscripción completada, con su código | `enrollmentId` | ADMIN, su estudiante o el instructor del curso |
+| `verify_certificate` | Comprueba que un código de certificado es auténtico: titular, curso y fecha | `code` | cualquier usuario |
 | `update_enrollment_progress` | Fija el progreso (0-100). Al llegar a 100 la inscripción se completa y se emite el certificado | `enrollmentId`, `progress` | ADMIN o su estudiante |
 | `cancel_enrollment` | Cancela una inscripción y libera su plaza | `enrollmentId` | ADMIN o su estudiante |
 | `list_students_by_course` | Lista los estudiantes inscritos en un curso | `courseId`, `status?`, `page?`, `size?` | ADMIN o el instructor del curso |
@@ -907,6 +945,7 @@ y `size` va de 1 a 100 (20 por defecto).
 - `idempotencyKey` es obligatoria en `enroll_student` por la misma razón que la cabecera `Idempotency-Key`
   en REST: un agente que reintenta tras un *timeout* recibe la inscripción original en lugar de ocupar otra
   plaza.
+- Las tools de borrado devuelven `{"deletedId": ...}`, donde la API REST responde 204 sin cuerpo.
 - Cada tool declara las *hints* de MCP que le corresponden (`readOnlyHint` en las consultas,
   `idempotentHint`, `destructiveHint`). Los clientes las usan para decidir cuándo pedir confirmación.
 
@@ -922,7 +961,7 @@ TOKEN=$(curl -s localhost:8080/api/auth/token -H 'Content-Type: application/json
 
 - **MCP Inspector:** `npx @modelcontextprotocol/inspector` y abre <http://localhost:6274>. Elige el
   transporte *Streamable HTTP* con la URL `http://localhost:8080/mcp`, y añade la cabecera
-  `Authorization: Bearer <token>` en la configuración de autenticación. *List Tools* muestra las 17 tools con
+  `Authorization: Bearer <token>` en la configuración de autenticación. *List Tools* muestra las 32 tools con
   sus parámetros, y cada una se puede ejecutar desde un formulario. En el devcontainer, el puerto 6274 ya se
   reenvía.
 - **MCPJam:** `npx @mcpjam/inspector@latest`, con la misma URL y la misma cabecera.
@@ -939,15 +978,17 @@ TOKEN=$(curl -s localhost:8080/api/auth/token -H 'Content-Type: application/json
 `McpServerTest` recorre todo esto con el cliente oficial del SDK de MCP, sobre HTTP real:
 
 - la lista de tools;
-- el flujo completo: crear categoría y curso, publicar, buscar, inscribirse, reintentar con la misma clave y
-  ver la activación asíncrona por RabbitMQ;
+- el flujo completo: crear categoría y curso, publicar, buscar, inscribirse, reintentar con la misma clave,
+  ver la activación asíncrona por RabbitMQ y el pago confirmado, completar el curso, obtener el certificado y
+  verificar su código;
 - los permisos;
 - la validación y los mensajes de error;
 - el 401 sin token.
 
-Comprobado también en el stack de Compose con `curl`: 17 tools, `search_courses` devuelve los cursos reales,
+Comprobado también en el stack de Compose con `curl`: 32 tools, `search_courses` devuelve los cursos reales,
 `create_category` como STUDENT responde `You are not allowed to perform this operation` y sin token la
-respuesta es 401.
+respuesta es 401. Un instructor recibe `not found` al pedir el borrador de otro, y `delete_instructor` responde
+409 mientras el instructor tiene cursos; sin cursos lo borra y su cuenta deja de poder iniciar sesión.
 
 ## Rendimiento: virtual threads y caché
 
@@ -1013,8 +1054,9 @@ ese curso.
 - **Invalidación después del *commit*.** El `CacheManager` es *transaction-aware*: una invalidación dentro
   de una transacción se aplica al confirmarse. Si se aplicara antes, otra petición podría volver a cachear la
   fila antigua en ese intervalo; y si hay *rollback*, no se invalida nada.
-- **Los permisos no dependen de la caché.** Un curso se cachea sea cual sea su estado, pero la regla "los
-  estudiantes solo ven cursos `PUBLISHED`" se comprueba en cada llamada, también en los aciertos. Por eso la
+- **Los permisos no dependen de la caché.** Un curso se cachea sea cual sea su estado, pero la regla de
+  visibilidad (un borrador solo lo ven ADMIN y su instructor) se comprueba en cada llamada, también en los
+  aciertos. Por eso la
   caché vive en un bean aparte, `CourseViewCache`: la comprobación nunca se salta, y el proxy de Spring
   intercepta la llamada (no intercepta las que un bean se hace a sí mismo).
 - **Nombres embebidos.** La vista de un curso incluye el nombre de su categoría y de su instructor, así que
@@ -1042,7 +1084,7 @@ invalidaciones no cambian.
 
 ## Tests
 
-`./mvnw test` ejecuta los 137 tests en menos de un minuto. Casi todos los de integración comparten un único
+`./mvnw test` ejecuta los 149 tests en menos de un minuto. Casi todos los de integración comparten un único
 contexto de Spring y un único par de contenedores (`AbstractIntegrationTest`), por eso la suite es rápida pese
 a usar PostgreSQL y RabbitMQ reales. Hay otros dos contextos:
 
@@ -1057,7 +1099,7 @@ a usar PostgreSQL y RabbitMQ reales. Hay otros dos contextos:
 | **Unitarios de casos de uso** (Mockito) | Ramas de error y lo que *no* debe ocurrir: no consumir plaza si ya está inscrito, no cobrar una inscripción cancelada, no reactivar una cancelada, no emitir un segundo certificado, entregas duplicadas sin efectos, login que no revela qué emails existen | `EnrollmentServiceTest`, `PaymentProcessorTest`, `PaymentOutcomeHandlerTest`, `CertificateIssuerTest`, `IdempotentRequestsTest`, `AccountServiceTest` |
 | **Unitarios de mapeo** | Que cada campo anidado o derivado de las vistas sale de su origen correcto | `CatalogViewMapperTest`, `EnrollmentViewMapperTest` |
 | **Integración** (Testcontainers) | Concurrencia sobre el aforo (20 hilos, 3 plazas), flujo completo por RabbitMQ, idempotencia de consumidores con entregas duplicadas, mensaje envenenado → DLQ sin reintentos, mensaje que falla al procesarse → reintentos con backoff → DLQ, `Idempotency-Key` | `EnrollmentConcurrencyTest`, `EnrollmentFlowTest`, `ConsumerIdempotencyTest` |
-| **HTTP** (MockMvc) | Flujo end-to-end por la API con cada rol, mapeo de errores a `problem+json`, 401/403 y reglas de propiedad, filtros de los listados, ausencia de N+1 (también con filtro) | `EnrollmentApiTest`, `ErrorHandlingApiTest`, `SecurityApiTest`, `ListFilteringApiTest`, `QueryEfficiencyTest` |
+| **HTTP** (MockMvc) | Flujo end-to-end por la API con cada rol, mapeo de errores a `problem+json`, 401/403 y reglas de propiedad, borradores visibles solo para ADMIN y su instructor, borrado de un instructor junto con su cuenta, filtros de los listados (también el global de inscripciones, solo ADMIN), ausencia de N+1 (también con filtro), pago visible con el motivo del rechazo, certificado visible solo a quien corresponde y verificable sin token sin exponer ids ni email | `EnrollmentApiTest`, `ErrorHandlingApiTest`, `SecurityApiTest`, `ListFilteringApiTest`, `QueryEfficiencyTest`, `CertificateAndPaymentApiTest` |
 | **Documentación de la API** | Cada operación de la especificación OpenAPI tiene su código de éxito real y todos sus errores como `ProblemDetail` | `ApiDocumentationTest` |
 | **Puertos reales** | Actuator accesible sin credenciales solo en el puerto de gestión, health y readiness con BD y broker, `info` con la compilación y Java, API protegida y ausente en ese puerto | `ManagementPortTest` |
 | **Virtual threads** | Peticiones HTTP, consumidores RabbitMQ y tareas programadas se ejecutan en virtual threads | `VirtualThreadsTest` |
@@ -1065,7 +1107,7 @@ a usar PostgreSQL y RabbitMQ reales. Hay otros dos contextos:
 | **Caché** | Lecturas servidas desde la caché, invalidación en cada escritura (plazas incluidas), permisos aplicados también en los aciertos, métricas | `CatalogCacheTest` |
 | **Paginación por cursor** | Recorrido completo sin repetir ni saltar cursos, curso creado a mitad del recorrido, solo `PUBLISHED` para estudiantes, cursor inválido, tamaño máximo | `CursorPaginationTest` |
 | **Rate limiting** | Login limitado por IP (429 con `Retry-After`, métrica, otra IP sin afectar), inscripción y MCP limitados por usuario y no por IP, cupo restante; con Redis real: dos instancias comparten un cupo, un Redis inaccesible falla rápido y el filtro deja pasar y cuenta la petición | `RateLimitingTest`, `RedisRateLimitingTest` |
-| **MCP** | Las 17 tools con descripción y parámetros; flujo completo de inscripción a través de tools con reintento idempotente y activación asíncrona; mismos permisos que la API; validación; errores sin detalles internos; 401 sin token | `McpServerTest`, `McpToolErrorsTest` |
+| **MCP** | Las 32 tools con descripción y parámetros; gestión del catálogo (categorías, cursos e instructores) y borrados; flujo completo a través de tools: inscripción con reintento idempotente, activación asíncrona, pago, certificado y su verificación; mismos permisos y visibilidad de borradores que la API; validación; errores sin detalles internos; 401 sin token | `McpServerTest`, `McpToolErrorsTest` |
 | **Contrato** | Campos del JSON de los eventos publicados | `EventContractTest` |
 
 Para comprobar que los tests no pasan por casualidad, quité a propósito ocho protecciones y confirmé que los
@@ -1092,7 +1134,7 @@ paralelo:
 
 | Job | Qué hace |
 |---|---|
-| Build and test | `./mvnw -B verify` con Java 21 (Temurin): compila y ejecuta los 137 tests. Los de integración usan el Docker que ya traen los runners `ubuntu-latest`, así que Testcontainers funciona sin configuración. Si algo falla, sube los informes de Surefire como artefacto. |
+| Build and test | `./mvnw -B verify` con Java 21 (Temurin): compila y ejecuta los 149 tests. Los de integración usan el Docker que ya traen los runners `ubuntu-latest`, así que Testcontainers funciona sin configuración. Si algo falla, sube los informes de Surefire como artefacto. |
 | Docker image and deployment config | Construye la imagen del `Dockerfile`, valida `docker-compose.yml` con `.env.example`, valida el JSON del dashboard de Grafana y valida la configuración y las alertas de Prometheus con `promtool`. |
 
 - Reutiliza las dependencias de Maven entre ejecuciones (caché de `setup-java`), tiene permisos de solo
@@ -1114,6 +1156,9 @@ paralelo:
   [Rate limiting](#rate-limiting)).
 - **Caché local a cada instancia.** Con varias instancias, la cifra de plazas mostrada puede ir hasta 1
   minuto por detrás en las que no hicieron el cambio (ver [Caché del catálogo](#caché-del-catálogo)).
+- **Verificación de certificados sin rate limiting.** `GET /api/certificates/{code}` es público y no tiene
+  cupo propio. Adivinar códigos no es viable (64 bits aleatorios), pero un cliente podría usarlo para generar
+  carga. Si hiciera falta, bastaría una regla por IP en `RateLimitFilter`, como la del login.
 - **Filas `FAILED` del outbox.** Requieren intervención manual. Las señala la métrica
   `courses_outbox_events{status="failed"}`, pero no hay un endpoint ni un proceso para republicarlas.
 
@@ -1127,6 +1172,8 @@ paralelo:
       consumidores y de `Idempotency-Key`, mensaje envenenado a la DLQ
 - [x] Endpoints REST con validación, paginación, filtros y OpenAPI (códigos de éxito y errores documentados);
       manejo de errores centralizado (ProblemDetail)
+- [x] Consulta del pago de una inscripción (con el motivo del rechazo), del certificado y verificación pública
+      de su código; listado global de inscripciones para ADMIN
 - [x] Tests HTTP end-to-end, de errores y de ausencia de N+1
 - [x] Seguridad JWT por rol, con reglas de propiedad por recurso y tests de 401/403
 - [x] Tests unitarios de dominio y de casos de uso con dobles de prueba (Mockito)
