@@ -23,6 +23,6 @@ python3 .devcontainer/context7/fetch-docs.py || echo "Context7 prefetch failed; 
 
 # Pre-pull the Testcontainers images into the in-container daemon (best effort, in background).
 ( sleep 5
-  for img in postgres:18.6-alpine rabbitmq:4.3.6-management-alpine; do
+  for img in postgres:18.6-alpine rabbitmq:4.3.6-management-alpine redis:8.10-alpine; do
     docker pull -q "$img" >/dev/null 2>&1 || true
   done ) &

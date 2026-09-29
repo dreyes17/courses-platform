@@ -48,6 +48,11 @@ spring:
     web:
       pageable:
         max-page-size: 100
+    # Stores the rate-limit buckets, shared by every instance (see RedisBuckets).
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+      password: ${SPRING_DATA_REDIS_PASSWORD:}
 
   rabbitmq:
     host: ${SPRING_RABBITMQ_HOST:localhost}
@@ -83,6 +88,25 @@ app:
     poll-interval: 500ms
     batch-size: 100
     confirm-timeout: 5s
+  rate-limit:
+    enabled: ${RATE_LIMIT_ENABLED:true}
+    # Bounds every check against Redis; past it the request is let through (fail-open) and counted.
+    redis-timeout: 200ms
+    # Per client IP: password guessing on login, account spam on registration.
+    login:
+      capacity: 10
+      period: 1m
+    registration:
+      capacity: 20
+      period: 1h
+    # Per user: a client stuck retrying enrollments.
+    enrollment:
+      capacity: 30
+      period: 1m
+    # Per user: every MCP tool call (an agent looping over tools), enroll_student included.
+    mcp:
+      capacity: 120
+      period: 1m
   cache:
     # Upper bound on staleness for catalog reads; writes evict immediately (see CacheConfig).
     catalog-ttl: ${CACHE_CATALOG_TTL:10m}
@@ -110,6 +134,8 @@ management:
       group:
         # Not ready to take traffic without its database or broker; liveness stays internal-only so a
         # dependency outage doesn't make the orchestrator restart a healthy process.
+        # Redis is left out on purpose: without it only rate limiting degrades (fail-open), so the instance can
+        # keep serving traffic. It still shows in /actuator/health.
         readiness:
           include: readinessState,db,rabbit
 

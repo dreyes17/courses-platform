@@ -41,8 +41,9 @@ public class ProblemDetailsSecurityHandler implements AuthenticationEntryPoint, 
                 "You are not allowed to perform this operation");
     }
 
-    private void write(HttpServletRequest request, HttpServletResponse response, HttpStatus status, String title,
-                       String detail) throws IOException {
+    /** Also used by {@link RateLimitFilter}, so a 429 has the same shape as every other error. */
+    void write(HttpServletRequest request, HttpServletResponse response, HttpStatus status, String title,
+               String detail) throws IOException {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, detail);
         problem.setTitle(title);
         problem.setInstance(URI.create(request.getRequestURI()));

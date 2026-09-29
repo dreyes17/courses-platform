@@ -7,7 +7,8 @@ limitado, pagos con confirmación asíncrona y emisión de certificados por even
 RabbitMQ.
 
 Stack: Java 21 (virtual threads) · Spring Boot 4.1 · PostgreSQL · Flyway · Spring AMQP · Spring Security (JWT) ·
-Caffeine · MapStruct · Spring AI (servidor MCP) · Testcontainers · Prometheus · GitHub Actions.
+Caffeine · MapStruct · Bucket4j + Redis · Spring AI (servidor MCP) · Testcontainers · Prometheus ·
+GitHub Actions.
 
 ## Arrancar el proyecto
 
@@ -15,7 +16,7 @@ Caffeine · MapStruct · Spring AI (servidor MCP) · Testcontainers · Prometheu
 
 ```bash
 cp .env.example .env          # secretos de evaluación local; .env está fuera de git
-docker compose up --build     # PostgreSQL + RabbitMQ + aplicación + Prometheus
+docker compose up --build     # PostgreSQL + RabbitMQ + Redis + aplicación + Prometheus
 ```
 
 - La aplicación queda en <http://localhost:8080>. La documentación interactiva está en
@@ -261,6 +262,8 @@ respuesta.
   (propiedades de la entidad, p. ej. `sort=price,desc`). Responden con
   `{content, page, size, totalElements, totalPages}`. Ningún endpoint devuelve una tabla entera. La búsqueda
   de cursos ofrece además paginación por cursor (ver [Paginación por cursor](#paginación-por-cursor)).
+- **Rate limiting** en login, registro, inscripción y MCP: 429 con `Retry-After` (ver
+  [Rate limiting](#rate-limiting)).
 - **Búsqueda de cursos.** Todos los filtros son opcionales y combinables: `categoryId`, `level`, `minPrice`,
   `maxPrice`, `title` (subcadena sin distinguir mayúsculas) y `withAvailableSeats=true`, además de `status`.
 - **Correlación.** Cualquier petición puede enviar `X-Correlation-Id` (si no, se genera uno), y la respuesta
@@ -370,6 +373,61 @@ ligeras:
 - La migración `V2__user_accounts.sql` garantiza en la BD que cada rol esté vinculado exactamente a su
   perfil (estudiante, instructor o ninguno en el caso del ADMIN).
 
+### Rate limiting
+
+Límites por cliente con *token bucket* (Bucket4j), guardados en **Redis** para que se cumplan entre todas las
+instancias (`RateLimitFilter`, `RedisBuckets`):
+
+| Regla | Endpoint | Límite por defecto | Cuenta por | Qué evita |
+|---|---|---|---|---|
+| `login` | `POST /api/auth/token` | 10 por minuto | IP | adivinar contraseñas |
+| `registration` | `POST /api/auth/register` | 20 por hora | IP | alta masiva de cuentas |
+| `enrollment` | `POST /api/enrollments` | 30 por minuto | usuario | un cliente reintentando en bucle |
+| `mcp` | `POST /mcp` | 120 por minuto | usuario | un agente de IA en bucle; cubre también `enroll_student` |
+
+- Al superarlo, la respuesta es **429** en `problem+json`, con `Retry-After` en segundos. Las peticiones
+  permitidas llevan `X-RateLimit-Remaining`.
+- **Por IP o por usuario.** Login y registro son anónimos, así que cuentan por IP. El resto cuenta por
+  usuario, porque el filtro va detrás de la autenticación JWT: estudiantes detrás de la misma IP (una
+  universidad, un NAT) no comparten cupo.
+- **La IP es la del cliente directo.** `X-Forwarded-For` no se lee nunca, porque cualquiera puede
+  falsificarla. Detrás de un proxy inverso de confianza, `server.forward-headers-strategy` hace que la IP
+  sea la del cliente real.
+
+**Por qué en Redis y no en memoria.** Con contadores en memoria, cada instancia cuenta por separado: con N
+instancias, el límite efectivo es N veces el configurado, y un límite contra fuerza bruta que se multiplica
+así es más débil de lo que parece. En Redis, todas las instancias comparten un único cupo por cliente, y
+además sobrevive a un reinicio de la aplicación.
+
+- **Sin carreras entre instancias.** Bucket4j actualiza cada bucket con *compare-and-swap*, así que dos
+  peticiones simultáneas en instancias distintas nunca consumen el mismo token.
+- **Redis no crece sin límite.** Cada clave (`rate-limit:<regla>:<ip|user>:<id>`) caduca cuando su bucket
+  se habría recargado del todo. Un cliente inactivo no ocupa nada, y perder su clave no cambia nada.
+- **Solo guarda esto.** Por eso no tiene volumen en Compose: perder Redis solo reinicia los contadores.
+
+**Si Redis falla, las peticiones pasan (*fail-open*).** Es una decisión deliberada: que caiga la protección
+no debe tirar la API con ella, y el login seguiría protegido por el coste de BCrypt. Para que eso no ocurra en
+silencio:
+
+- Cada comprobación tiene un *timeout* de 200 ms (`app.rate-limit.redis-timeout`). Sin conexión, las
+  operaciones se rechazan al momento en lugar de encolarse, y la reconexión se reintenta como mucho cada 5
+  segundos. Una caída de Redis no añade latencia apreciable.
+- Cada petición que pasa sin comprobar suma en `courses_rate_limit_unavailable_total`. La alerta
+  `RateLimitingUnavailable` salta en cuanto aparece.
+- Redis aparece en `/actuator/health`, pero no en la sonda de *readiness*: una instancia sin Redis sigue
+  pudiendo servir tráfico.
+- La aplicación arranca aunque Redis no esté: la conexión se abre en el primer uso.
+
+**Comprobado en el stack de Compose:**
+
+- el 11.º login seguido recibe 429 y el bucket aparece en Redis;
+- tras reiniciar la aplicación, el límite se mantiene;
+- con Redis parado, los logins pasan, se cuentan, la instancia sigue *ready* y la alerta pasa a `firing`;
+- al volver Redis, se vuelve a limitar sin reiniciar la aplicación.
+
+Los límites se configuran en `app.rate-limit.*` y se pueden desactivar con `RATE_LIMIT_ENABLED=false`. Los
+rechazos se cuentan en `courses_rate_limit_rejected_total{rule}`.
+
 ## Actuator y puerto de gestión
 
 Actuator (`health`, `info`, `prometheus`) no se sirve en el puerto de la API. Tiene su propio puerto de
@@ -392,7 +450,8 @@ se publica fuera, así que no hace falta autenticación. Por eso `health` muestr
 y de RabbitMQ.
 
 **Sondas.** `/actuator/health/readiness` incluye la BD y RabbitMQ (`readinessState,db,rabbit`): una
-instancia sin BD o sin broker deja de recibir tráfico. `/actuator/health/liveness` no los incluye a
+instancia sin BD o sin broker deja de recibir tráfico. Redis queda fuera a propósito, porque sin él solo se
+degrada el rate limiting. `/actuator/health/liveness` no los incluye a
 propósito. Si se cayera la BD y la sonda de *liveness* dependiera de ella, el orquestador reiniciaría
 procesos que están sanos, y eso no arreglaría nada.
 
@@ -426,6 +485,7 @@ estas métricas de negocio y operación:
 | `courses_certificates_issued_total` | contador | Certificados emitidos |
 | `courses_messaging_dlq_messages{queue}` | *gauge* | Mensajes esperando en cada DLQ |
 | `courses_outbox_events{status}` | *gauge* | Eventos del outbox `pending` (retraso de publicación) y `failed` (requieren intervención) |
+| `courses_rate_limit_rejected_total{rule}` | contador | Peticiones rechazadas con 429, por regla (ver [Rate limiting](#rate-limiting)) |
 | `cache_gets_total{cache,result}` | contador | Lecturas de cada caché del catálogo, `hit` o `miss` (ver [Caché del catálogo](#caché-del-catálogo)) |
 
 - **Solo se cuenta lo que confirma.** Las inscripciones creadas, los pagos y los certificados se
@@ -448,6 +508,7 @@ estas métricas de negocio y operación:
 | `CoursesInstanceDown` | `up == 0` durante 1 min | critical | Prometheus no consigue leer la aplicación |
 | `MessagesInDeadLetterQueue` | `courses_messaging_dlq_messages > 0` durante 1 min | warning | Un consumidor agotó sus reintentos. Hay que revisar los mensajes y republicarlos o descartarlos |
 | `OutboxEventsFailed` | `courses_outbox_events{status="failed"} > 0` | critical | Eventos que el relay abandonó; requieren intervención manual |
+| `RateLimitingUnavailable` | alguna petición pasó sin comprobar en los últimos 5 min | warning | Redis no responde y el rate limiting no se está aplicando (ver [Rate limiting](#rate-limiting)) |
 | `OutboxPublishingStalled` | `pending` no baja de 50 en 5 min | warning | El relay vacía el outbox cada 500 ms, así que un atasco sostenido indica que no puede publicar |
 
 - **La interfaz queda en <http://localhost:9090> y se publica solo en `127.0.0.1`.** Muestra todas las
@@ -706,6 +767,8 @@ el enunciado, en Spring AI 2.0.1 (compatible con Spring Boot 4). Las tools son m
   cliente solo recibe mensajes escritos por la aplicación (`Course … not found`,
   `Invalid arguments: progress must be less than or equal to 100`). Cualquier error inesperado llega como
   `An unexpected error occurred` y se registra en el log.
+- **Rate limiting propio.** `/mcp` tiene su propio límite por usuario, que cubre también `enroll_student`
+  (ver [Rate limiting](#rate-limiting)).
 
 **Tools disponibles.** Los parámetros marcados con `?` son opcionales. En los listados, `page` empieza en 0
 y `size` va de 1 a 100 (20 por defecto).
@@ -866,10 +929,14 @@ invalidaciones no cambian.
 
 ## Tests
 
-`./mvnw test` ejecuta los 116 tests en unos 40 segundos. Casi todos los de integración comparten un único
+`./mvnw test` ejecuta los 123 tests en unos 45 segundos. Casi todos los de integración comparten un único
 contexto de Spring y un único par de contenedores (`AbstractIntegrationTest`), por eso la suite es rápida pese
-a usar PostgreSQL y RabbitMQ reales. La excepción es `@RealServerTest`, con servidores reales en puertos reales, que comparten
-`ManagementPortTest`, `VirtualThreadsTest` y `McpServerTest`.
+a usar PostgreSQL y RabbitMQ reales. Hay otros dos contextos:
+
+- `@RealServerTest`, con servidores reales en puertos reales. Lo comparten `ManagementPortTest`,
+  `VirtualThreadsTest` y `McpServerTest`.
+- El de `RateLimitingTest`, que activa el rate limiting con límites bajos. En el contexto común está
+  desactivado, porque la suite hace cientos de logins desde la misma dirección.
 
 | Nivel | Qué cubre | Clases |
 |---|---|---|
@@ -883,10 +950,11 @@ a usar PostgreSQL y RabbitMQ reales. La excepción es `@RealServerTest`, con ser
 | **Observabilidad** | `correlationId` propagado de la petición HTTP al consumidor a través de RabbitMQ, ids no seguros sustituidos, contadores por resultado, *gauges* de DLQ y de outbox `FAILED` | `ObservabilityTest` |
 | **Caché** | Lecturas servidas desde la caché, invalidación en cada escritura (plazas incluidas), permisos aplicados también en los aciertos, métricas | `CatalogCacheTest` |
 | **Paginación por cursor** | Recorrido completo sin repetir ni saltar cursos, curso creado a mitad del recorrido, solo `PUBLISHED` para estudiantes, cursor inválido, tamaño máximo | `CursorPaginationTest` |
+| **Rate limiting** | Login limitado por IP (429 con `Retry-After`, métrica, otra IP sin afectar), inscripción y MCP limitados por usuario y no por IP, cupo restante; con Redis real: dos instancias comparten un cupo, un Redis inaccesible falla rápido y el filtro deja pasar y cuenta la petición | `RateLimitingTest`, `RedisRateLimitingTest` |
 | **MCP** | Las 17 tools con descripción y parámetros; flujo completo de inscripción a través de tools con reintento idempotente y activación asíncrona; mismos permisos que la API; validación; errores sin detalles internos; 401 sin token | `McpServerTest`, `McpToolErrorsTest` |
 | **Contrato** | Campos del JSON de los eventos publicados | `EventContractTest` |
 
-Para comprobar que los tests no pasan por casualidad, quité a propósito seis protecciones y confirmé que los
+Para comprobar que los tests no pasan por casualidad, quité a propósito siete protecciones y confirmé que los
 tests fallaban:
 
 - sin el `@EntityGraph`, `QueryEfficiencyTest` detecta el N+1;
@@ -897,6 +965,7 @@ tests fallaban:
 - con `spring.threads.virtual.enabled=false`, fallan los tres tests de `VirtualThreadsTest`;
 - sin el `@CacheEvict` de `tryReserveSeat`/`releaseSeat`, `CatalogCacheTest` detecta que el curso sigue
   mostrando 2 plazas libres después de una inscripción;
+- sin registrar el filtro de rate limiting, fallan los tests de `RateLimitingTest`;
 - sin el `@PreAuthorize` de `create_category`, `McpServerTest` detecta que un estudiante puede crear
   categorías.
 
@@ -907,7 +976,7 @@ paralelo:
 
 | Job | Qué hace |
 |---|---|
-| Build and test | `./mvnw -B verify` con Java 21 (Temurin): compila y ejecuta los 116 tests. Los de integración usan el Docker que ya traen los runners `ubuntu-latest`, así que Testcontainers funciona sin configuración. Si algo falla, sube los informes de Surefire como artefacto. |
+| Build and test | `./mvnw -B verify` con Java 21 (Temurin): compila y ejecuta los 123 tests. Los de integración usan el Docker que ya traen los runners `ubuntu-latest`, así que Testcontainers funciona sin configuración. Si algo falla, sube los informes de Surefire como artefacto. |
 | Docker image and deployment config | Construye la imagen del `Dockerfile`, valida `docker-compose.yml` con `.env.example` y valida la configuración y las alertas de Prometheus con `promtool`. |
 
 - Reutiliza las dependencias de Maven entre ejecuciones (caché de `setup-java`), tiene permisos de solo
@@ -924,6 +993,9 @@ paralelo:
   transacción de BD abierta. Con la pasarela simulada no importa. Con una real, convendría separar el cobro
   de la transacción; la clave de idempotencia del pago (`enrollment-<id>`) ya evita cobrar dos veces si se
   reintenta.
+- **Rate limiting sin Redis.** Si Redis no responde, las peticiones pasan sin límite (*fail-open*
+  deliberado) hasta que vuelve. La alerta `RateLimitingUnavailable` lo señala (ver
+  [Rate limiting](#rate-limiting)).
 - **Caché local a cada instancia.** Con varias instancias, la cifra de plazas mostrada puede ir hasta 1
   minuto por detrás en las que no hicieron el cambio (ver [Caché del catálogo](#caché-del-catálogo)).
 - **Filas `FAILED` del outbox.** Requieren intervención manual. Las señala la métrica

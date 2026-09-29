@@ -26,6 +26,8 @@ import java.util.UUID;
         "spring.jpa.properties.hibernate.session_factory.statement_inspector="
                 + "com.example.courses.support.SqlStatementCounter",
         "app.jwt.secret=test-only-secret-at-least-32-bytes-long!",
+        // The suite logs in hundreds of times from one address; RateLimitingTest enables it on its own.
+        "app.rate-limit.enabled=false",
         "app.security.admin.email=" + AbstractIntegrationTest.ADMIN_EMAIL,
         "app.security.admin.password=" + AbstractIntegrationTest.ADMIN_PASSWORD
 })

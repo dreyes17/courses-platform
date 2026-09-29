@@ -30,6 +30,17 @@ groups:
           description: >-
             The relay gave up on these events; they need manual intervention (see README, known limitations).
 
+      - alert: RateLimitingUnavailable
+        # Redis unreachable: the rate limiter lets every request through (fail-open) and counts each one.
+        expr: sum(increase(courses_rate_limit_unavailable_total[5m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Rate limiting is not being enforced: its Redis store is unreachable"
+          description: >-
+            {{ $value }} request(s) in the last 5 minutes went through without a rate-limit check. Login and
+            enrollment are unprotected until Redis is back.
+
       - alert: OutboxPublishingStalled
         # The relay drains the outbox every few hundred milliseconds, so a backlog that never drops below 50
         # for five minutes means it can't publish (broker down, confirms timing out...).

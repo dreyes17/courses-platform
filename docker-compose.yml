@@ -1,4 +1,4 @@
-# Runs the whole platform: PostgreSQL, RabbitMQ, the application and Prometheus.
+# Runs the whole platform: PostgreSQL, RabbitMQ, Redis, the application and Prometheus.
 #   cp .env.example .env && docker compose up --build
 # Secrets come only from the environment / .env (git-ignored); missing ones stop compose with an error.
 name: courses
@@ -37,6 +37,20 @@ services:
       timeout: 10s
       retries: 20
 
+  # Stores the rate-limit buckets, so the limits hold across instances. Nothing else lives here, so no volume:
+  # losing it only resets the counters.
+  redis:
+    image: redis:8.10-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}"]
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   app:
     build: .
     image: courses-app
@@ -46,6 +60,9 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      # Started first, but not required: without Redis only rate limiting degrades (fail-open).
+      redis:
+        condition: service_started
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/courses
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-courses}
@@ -53,6 +70,8 @@ services:
       SPRING_RABBITMQ_HOST: rabbitmq
       SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-courses}
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET (at least 32 bytes) in .env}
       ADMIN_EMAIL: ${ADMIN_EMAIL:?set ADMIN_EMAIL in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
