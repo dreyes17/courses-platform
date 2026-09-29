@@ -421,7 +421,7 @@ una línea por evento y con `correlationId` como campo, listos para un recolecto
 local son texto plano, con el id entre corchetes. Por ejemplo:
 
 ```json
-{"@timestamp":"…","log":{"level":"INFO","logger":"…PaymentProcessor"},"process":{"thread":{"name":"…RabbitListenerEndpointContainer#3-1"}},"correlationId":"demo-23643","message":"Payment … confirmed (transaction …)", …}
+{"@timestamp":"…","log":{"level":"INFO","logger":"…PaymentProcessor"},"process":{"thread":{"name":"rabbit-simple-3"}},"correlationId":"demo-23643","message":"Payment … confirmed (transaction …)", …}
 ```
 
 **Por qué un correlation-id y no trazas distribuidas.** El enunciado admite cualquiera de las dos. La
@@ -618,7 +618,43 @@ Tras agotar los reintentos, ese mensaje se mueve a la DLQ en vez de bloquear la 
 resuelve "este mensaje ya lo procesé, no lo proceses otra vez"; la DLQ resuelve "este mensaje no se puede
 procesar, sácalo de la cola". Son mecanismos independientes y complementarios.
 
-## Caché del catálogo
+## Rendimiento: virtual threads y caché
+
+### Virtual threads
+
+Con `spring.threads.virtual.enabled=true`, tres fuentes de hilos pasan a usar virtual threads:
+
+| Dónde | Antes | Ahora |
+|---|---|---|
+| Peticiones HTTP (Tomcat) | pool de 200 hilos de plataforma | un virtual thread por petición |
+| Consumidores `@RabbitListener` | hilos de plataforma del contenedor de listeners | virtual threads (`rabbit-simple-N` en los logs) |
+| Tareas `@Scheduled` (relay del outbox) | un hilo de plataforma | virtual threads |
+
+**Por qué aporta aquí.** Casi todo el tiempo de una petición o de un mensaje se pasa esperando a PostgreSQL
+o a RabbitMQ. Con hilos de plataforma, cada espera ocupa uno de los 200 hilos de Tomcat, y un pico de
+peticiones lentas deja en cola al resto aunque la CPU esté libre. Un virtual thread bloqueado apenas ocupa
+memoria y libera su hilo portador, así que el número de peticiones en curso deja de estar limitado por el
+tamaño de un pool.
+
+**Qué no cambia.** El límite real del trabajo con la BD sigue siendo el pool de Hikari (10 conexiones por
+defecto): con virtual threads, las peticiones que superan ese límite esperan una conexión en lugar de esperar
+un hilo. Tampoco cambia la garantía de aforo, que da el `UPDATE` condicional y no el número de hilos.
+
+**El riesgo en Java 21: *pinning*.** En Java 21, un virtual thread que se bloquea dentro de un bloque
+`synchronized` no suelta su hilo portador. Java 24 lo corrige (JEP 491). En lugar de suponerlo, lo medí: la
+suite completa se ejecutó con `-Djdk.tracePinnedThreads=short`, que registra cada vez que ocurre, y no
+apareció ningún caso. Esa ejecución incluye el test de concurrencia, los flujos por RabbitMQ, el relay del
+outbox y el acceso JDBC. Para repetirlo:
+
+```bash
+./mvnw test -DargLine="-Djdk.tracePinnedThreads=short"   # cada caso aparecería con su traza en la salida
+```
+
+`VirtualThreadsTest` comprueba cada fuente ejecutando trabajo en ella: un consumidor creado con la misma
+factoría que los `@RabbitListener` y una tarea en el scheduler del relay. Para Tomcat verifica su executor,
+porque MockMvc no pasa por el servidor. Con la propiedad desactivada, los tres tests fallan.
+
+### Caché del catálogo
 
 Spring Cache con Caffeine (en memoria), configurado en `shared.config.CacheConfig`:
 
@@ -675,10 +711,11 @@ invalidaciones no cambian.
 
 ## Tests
 
-`./mvnw test` ejecuta los 100 tests en unos 30 segundos. Casi todos los de integración comparten un único
+`./mvnw test` ejecuta los 103 tests en unos 35 segundos. Casi todos los de integración comparten un único
 contexto de Spring y un único par de contenedores (`AbstractIntegrationTest`), por eso la suite es rápida pese
-a usar PostgreSQL y RabbitMQ reales. La excepción es `ManagementPortTest`, que necesita servidores reales en
-dos puertos distintos.
+a usar PostgreSQL y RabbitMQ reales. Las excepciones son `ManagementPortTest`, que necesita servidores reales
+en dos puertos distintos, y `VirtualThreadsTest`, que reutiliza ese mismo contexto porque necesita el Tomcat
+real.
 
 | Nivel | Qué cubre | Clases |
 |---|---|---|
@@ -688,11 +725,12 @@ dos puertos distintos.
 | **Integración** (Testcontainers) | Concurrencia sobre el aforo (20 hilos, 3 plazas), flujo completo por RabbitMQ, idempotencia de consumidores con entregas duplicadas, mensaje envenenado → DLQ, `Idempotency-Key` | `EnrollmentConcurrencyTest`, `EnrollmentFlowTest`, `ConsumerIdempotencyTest` |
 | **HTTP** (MockMvc) | Flujo end-to-end por la API con cada rol, mapeo de errores a `problem+json`, 401/403 y reglas de propiedad, ausencia de N+1 | `EnrollmentApiTest`, `ErrorHandlingApiTest`, `SecurityApiTest`, `QueryEfficiencyTest` |
 | **Puertos reales** | Actuator accesible sin credenciales solo en el puerto de gestión, health y readiness con BD y broker, API protegida y ausente en ese puerto | `ManagementPortTest` |
+| **Virtual threads** | Peticiones HTTP, consumidores RabbitMQ y tareas programadas se ejecutan en virtual threads | `VirtualThreadsTest` |
 | **Observabilidad** | `correlationId` propagado de la petición HTTP al consumidor a través de RabbitMQ, ids no seguros sustituidos, contadores por resultado, *gauges* de DLQ y de outbox `FAILED` | `ObservabilityTest` |
 | **Caché** | Lecturas servidas desde la caché, invalidación en cada escritura (plazas incluidas), permisos aplicados también en los aciertos, métricas | `CatalogCacheTest` |
 | **Contrato** | Campos del JSON de los eventos publicados | `EventContractTest` |
 
-Para comprobar que los tests no pasan por casualidad, quité a propósito cuatro protecciones y confirmé que los
+Para comprobar que los tests no pasan por casualidad, quité a propósito cinco protecciones y confirmé que los
 tests fallaban:
 
 - sin el `@EntityGraph`, `QueryEfficiencyTest` detecta el N+1;
@@ -700,6 +738,7 @@ tests fallaban:
   inscripción cancelada;
 - sin la cabecera `x-correlation-id` en `OutboxRelay`, `ObservabilityTest` detecta que el id no llega al
   consumidor;
+- con `spring.threads.virtual.enabled=false`, fallan los tres tests de `VirtualThreadsTest`;
 - sin el `@CacheEvict` de `tryReserveSeat`/`releaseSeat`, `CatalogCacheTest` detecta que el curso sigue
   mostrando 2 plazas libres después de una inscripción.
 

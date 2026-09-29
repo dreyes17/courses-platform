@@ -2,6 +2,13 @@ spring:
   application:
     name: courses
 
+  # Requests, @RabbitListener consumers and the @Scheduled outbox relay run on virtual threads: the work is
+  # I/O-bound (PostgreSQL, RabbitMQ), so a blocked call parks a cheap virtual thread instead of a pool thread.
+  # The Hikari pool remains the real concurrency limit for database work. See README, "Virtual threads".
+  threads:
+    virtual:
+      enabled: true
+
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/courses}
     username: ${SPRING_DATASOURCE_USERNAME:courses}
