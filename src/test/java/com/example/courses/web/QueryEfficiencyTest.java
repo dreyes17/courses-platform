@@ -3,8 +3,12 @@ package com.example.courses.web;
 import com.example.courses.AbstractIntegrationTest;
 import com.example.courses.catalog.application.CourseSearchCriteria;
 import com.example.courses.catalog.application.CourseService;
+import com.example.courses.catalog.domain.Course;
 import com.example.courses.catalog.domain.CourseLevel;
 import com.example.courses.enrollment.application.EnrollmentService;
+import com.example.courses.enrollment.domain.Enrollment;
+import com.example.courses.enrollment.domain.EnrollmentStatus;
+import com.example.courses.enrollment.repository.EnrollmentRepository;
 import com.example.courses.support.SqlStatementCounter;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,6 +29,8 @@ class QueryEfficiencyTest extends AbstractIntegrationTest {
     private EnrollmentService enrollmentService;
     @Autowired
     private CourseService courseService;
+    @Autowired
+    private EnrollmentRepository enrollments;
 
     @Test
     void studentsOfACourseLoadWithoutNPlusOne() {
@@ -34,7 +40,7 @@ class QueryEfficiencyTest extends AbstractIntegrationTest {
         }
 
         SqlStatementCounter.reset();
-        var page = enrollmentService.listStudentsOfCourse(courseId, PageRequest.of(0, 20));
+        var page = enrollmentService.listStudentsOfCourse(courseId, null, PageRequest.of(0, 20));
 
         assertThat(page.getContent()).hasSize(ROWS).allSatisfy(row -> assertThat(row.email()).isNotBlank());
         assertThat(SqlStatementCounter.statements())
@@ -51,12 +57,38 @@ class QueryEfficiencyTest extends AbstractIntegrationTest {
         }
 
         SqlStatementCounter.reset();
-        var page = enrollmentService.listCoursesOfStudent(studentId, PageRequest.of(0, 20));
+        var page = enrollmentService.listCoursesOfStudent(studentId, null, PageRequest.of(0, 20));
 
         assertThat(page.getContent()).hasSize(ROWS).allSatisfy(row -> assertThat(row.courseTitle()).isNotBlank());
         assertThat(SqlStatementCounter.statements())
                 .hasSizeLessThanOrEqualTo(2)
                 .anySatisfy(sql -> assertThat(sql).containsIgnoringCase("join courses"));
+    }
+
+    @Test
+    void studentsOfACourseFilteredByStatusLoadWithoutNPlusOne() {
+        UUID courseId = publishedCourse(ROWS, BigDecimal.TEN);
+        // Built through the domain, bypassing the outbox, so no payment event changes a status mid-test.
+        transactionTemplate.executeWithoutResult(status -> {
+            Course course = courses.findById(courseId).orElseThrow();
+            for (int i = 0; i < ROWS; i++) {
+                Enrollment enrollment = Enrollment.requestFor(students.findById(student()).orElseThrow(), course);
+                if (i % 2 == 0) {
+                    enrollment.activate();
+                }
+                enrollments.save(enrollment);
+            }
+        });
+
+        SqlStatementCounter.reset();
+        var page = enrollmentService.listStudentsOfCourse(courseId, EnrollmentStatus.ACTIVE, PageRequest.of(0, 20));
+
+        assertThat(page.getContent()).hasSize(ROWS / 2)
+                .allSatisfy(row -> assertThat(row.status()).isEqualTo(EnrollmentStatus.ACTIVE))
+                .allSatisfy(row -> assertThat(row.email()).isNotBlank());
+        assertThat(SqlStatementCounter.statements())
+                .hasSizeLessThanOrEqualTo(2)
+                .anySatisfy(sql -> assertThat(sql).containsIgnoringCase("join students"));
     }
 
     @Test

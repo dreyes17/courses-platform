@@ -49,6 +49,14 @@ class ManagementPortTest {
     }
 
     @Test
+    void infoDescribesTheBuildAndTheJavaRuntime() throws Exception {
+        HttpResponse<String> response = get(managementPort, "/actuator/info");
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body()).contains("\"build\"", "\"artifact\":\"courses\"", "\"version\"", "\"java\"");
+    }
+
+    @Test
     void actuatorIsNotServedOnTheApiPort() throws Exception {
         assertThat(get(apiPort, "/actuator/prometheus").statusCode()).isNotEqualTo(200);
         assertThat(get(apiPort, "/actuator/health").statusCode()).isNotEqualTo(200);

@@ -6,6 +6,7 @@ import com.example.courses.catalog.application.CourseSearchCriteria;
 import com.example.courses.catalog.application.CourseService;
 import com.example.courses.catalog.application.CourseTerms;
 import com.example.courses.catalog.application.CourseView;
+import com.example.courses.catalog.domain.CategoryStatus;
 import com.example.courses.catalog.domain.CourseLevel;
 import com.example.courses.catalog.domain.CourseStatus;
 import com.example.courses.shared.mcp.McpPaging;
@@ -47,12 +48,18 @@ class CatalogTools {
         this.courses = courses;
     }
 
-    @McpTool(name = "list_categories", description = "List the course categories, alphabetically, one page at a time.",
+    @McpTool(name = "list_categories", description = """
+            List the course categories, alphabetically, one page at a time. The filters are optional and \
+            combine with AND.""",
             annotations = @McpAnnotations(readOnlyHint = true))
     public PageResponse<CategoryView> listCategories(
+            @McpToolParam(description = "Case-insensitive text contained in the name", required = false)
+            String name,
+            @McpToolParam(description = "Only this status: ACTIVE or ARCHIVED", required = false)
+            CategoryStatus status,
             @McpToolParam(description = McpPaging.PAGE_DESCRIPTION, required = false) Integer page,
             @McpToolParam(description = McpPaging.SIZE_DESCRIPTION, required = false) Integer size) {
-        return PageResponse.from(categories.list(McpPaging.page(page, size, Sort.by("name"))));
+        return PageResponse.from(categories.list(name, status, McpPaging.page(page, size, Sort.by("name"))));
     }
 
     @McpTool(name = "get_category", description = "Get one course category by id.",

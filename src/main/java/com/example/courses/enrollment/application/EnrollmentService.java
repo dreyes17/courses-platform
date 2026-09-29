@@ -105,20 +105,30 @@ public class EnrollmentService {
         return mapper.toView(findEnrollment(enrollmentId));
     }
 
+    /** A null status lists enrollments in any status. */
     @Transactional(readOnly = true)
-    public Page<CourseEnrollmentView> listStudentsOfCourse(UUID courseId, Pageable pageable) {
+    public Page<CourseEnrollmentView> listStudentsOfCourse(UUID courseId, EnrollmentStatus status,
+                                                           Pageable pageable) {
         if (!courses.existsById(courseId)) {
             throw new ResourceNotFoundException("Course", courseId);
         }
-        return enrollments.findByCourseId(courseId, pageable).map(mapper::toCourseEnrollmentView);
+        Page<Enrollment> page = status == null
+                ? enrollments.findByCourseId(courseId, pageable)
+                : enrollments.findByCourseIdAndStatus(courseId, status, pageable);
+        return page.map(mapper::toCourseEnrollmentView);
     }
 
+    /** A null status lists enrollments in any status. */
     @Transactional(readOnly = true)
-    public Page<StudentEnrollmentView> listCoursesOfStudent(UUID studentId, Pageable pageable) {
+    public Page<StudentEnrollmentView> listCoursesOfStudent(UUID studentId, EnrollmentStatus status,
+                                                            Pageable pageable) {
         if (!students.existsById(studentId)) {
             throw new ResourceNotFoundException("Student", studentId);
         }
-        return enrollments.findByStudentId(studentId, pageable).map(mapper::toStudentEnrollmentView);
+        Page<Enrollment> page = status == null
+                ? enrollments.findByStudentId(studentId, pageable)
+                : enrollments.findByStudentIdAndStatus(studentId, status, pageable);
+        return page.map(mapper::toStudentEnrollmentView);
     }
 
     private EnrollmentView enrollNow(UUID studentId, UUID courseId) {

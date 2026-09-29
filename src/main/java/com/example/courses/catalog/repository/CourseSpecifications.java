@@ -3,13 +3,13 @@ package com.example.courses.catalog.repository;
 import com.example.courses.catalog.domain.Course;
 import com.example.courses.catalog.domain.CourseLevel;
 import com.example.courses.catalog.domain.CourseStatus;
+import com.example.courses.shared.repository.SpecificationFilters;
 import org.springframework.data.jpa.domain.Specification;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.UUID;
 
 public final class CourseSpecifications {
@@ -35,8 +35,7 @@ public final class CourseSpecifications {
             filters.add((root, query, cb) -> cb.lessThanOrEqualTo(root.get("price"), maxPrice));
         }
         if (titleContains != null && !titleContains.isBlank()) {
-            String pattern = "%" + escapeLike(titleContains.toLowerCase(Locale.ROOT)) + "%";
-            filters.add((root, query, cb) -> cb.like(cb.lower(root.get("title")), pattern, '\\'));
+            filters.add(SpecificationFilters.containsIgnoringCase(titleContains, "title"));
         }
         if (Boolean.TRUE.equals(withAvailableSeats)) {
             filters.add((root, query, cb) -> cb.lessThan(root.get("seatsTaken"), root.get("capacity")));
@@ -66,9 +65,5 @@ public final class CourseSpecifications {
             }
             return cb.conjunction();
         };
-    }
-
-    private static String escapeLike(String value) {
-        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
     }
 }

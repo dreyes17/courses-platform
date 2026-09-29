@@ -6,6 +6,7 @@ import com.example.courses.enrollment.application.EnrollmentView;
 import com.example.courses.enrollment.application.StudentEnrollmentView;
 import com.example.courses.enrollment.application.StudentService;
 import com.example.courses.enrollment.application.StudentView;
+import com.example.courses.enrollment.domain.EnrollmentStatus;
 import com.example.courses.shared.mcp.McpPaging;
 import com.example.courses.shared.security.CurrentUser;
 import com.example.courses.shared.web.PageResponse;
@@ -33,6 +34,9 @@ import java.util.UUID;
 @Validated
 class EnrollmentTools {
 
+    private static final String STATUS_FILTER_DESCRIPTION =
+            "Only enrollments in this status: PENDING_PAYMENT, ACTIVE, COMPLETED or CANCELLED";
+
     private final EnrollmentService enrollments;
     private final StudentService students;
 
@@ -41,13 +45,18 @@ class EnrollmentTools {
         this.students = students;
     }
 
-    @McpTool(name = "list_students", description = "List registered students, oldest first. ADMIN only.",
+    @McpTool(name = "list_students", description = """
+            List registered students, oldest first. The filters are optional and combine with AND. ADMIN only.""",
             annotations = @McpAnnotations(readOnlyHint = true))
     @PreAuthorize("hasRole('ADMIN')")
     public PageResponse<StudentView> listStudents(
+            @McpToolParam(description = "Case-insensitive text contained in the first or last name", required = false)
+            String name,
+            @McpToolParam(description = "Case-insensitive text contained in the email", required = false)
+            String email,
             @McpToolParam(description = McpPaging.PAGE_DESCRIPTION, required = false) Integer page,
             @McpToolParam(description = McpPaging.SIZE_DESCRIPTION, required = false) Integer size) {
-        return PageResponse.from(students.list(McpPaging.page(page, size, Sort.by("createdAt"))));
+        return PageResponse.from(students.list(name, email, McpPaging.page(page, size, Sort.by("createdAt"))));
     }
 
     @McpTool(name = "get_student", description = "Get one student by id. ADMIN or the student themselves.",
@@ -110,9 +119,10 @@ class EnrollmentTools {
     @PreAuthorize("hasRole('ADMIN') or @access.teachesCourse(authentication, #courseId)")
     public PageResponse<CourseEnrollmentView> listStudentsByCourse(
             @McpToolParam(description = "Course id (UUID)") @NotNull UUID courseId,
+            @McpToolParam(description = STATUS_FILTER_DESCRIPTION, required = false) EnrollmentStatus status,
             @McpToolParam(description = McpPaging.PAGE_DESCRIPTION, required = false) Integer page,
             @McpToolParam(description = McpPaging.SIZE_DESCRIPTION, required = false) Integer size) {
-        return PageResponse.from(enrollments.listStudentsOfCourse(courseId,
+        return PageResponse.from(enrollments.listStudentsOfCourse(courseId, status,
                 McpPaging.page(page, size, Sort.by("enrolledAt"))));
     }
 
@@ -123,9 +133,10 @@ class EnrollmentTools {
     @PreAuthorize("hasRole('ADMIN') or @access.isStudent(authentication, #studentId)")
     public PageResponse<StudentEnrollmentView> listCoursesByStudent(
             @McpToolParam(description = "Student id (UUID)") @NotNull UUID studentId,
+            @McpToolParam(description = STATUS_FILTER_DESCRIPTION, required = false) EnrollmentStatus status,
             @McpToolParam(description = McpPaging.PAGE_DESCRIPTION, required = false) Integer page,
             @McpToolParam(description = McpPaging.SIZE_DESCRIPTION, required = false) Integer size) {
-        return PageResponse.from(enrollments.listCoursesOfStudent(studentId,
+        return PageResponse.from(enrollments.listCoursesOfStudent(studentId, status,
                 McpPaging.page(page, size, Sort.by("enrolledAt"))));
     }
 }

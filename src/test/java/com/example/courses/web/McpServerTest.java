@@ -96,6 +96,10 @@ class McpServerTest {
                 ok(student, "get_enrollment", Map.of("enrollmentId", enrollmentId)).get("status").asString())
                 .isEqualTo("ACTIVE"));
         assertThat(ok(admin, "get_course", Map.of("courseId", courseId)).get("availableSeats").asInt()).isEqualTo(2);
+        assertThat(ok(admin, "list_students_by_course", Map.of("courseId", courseId, "status", "ACTIVE"))
+                .get("totalElements").asInt()).isEqualTo(1);
+        assertThat(ok(admin, "list_students_by_course", Map.of("courseId", courseId, "status", "CANCELLED"))
+                .get("totalElements").asInt()).isZero();
     }
 
     @Test

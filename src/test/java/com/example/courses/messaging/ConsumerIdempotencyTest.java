@@ -102,6 +102,26 @@ class ConsumerIdempotencyTest extends AbstractIntegrationTest {
         assertThat(deadLettered.getMessageProperties().getMessageId()).isEqualTo(messageId);
     }
 
+    @Test
+    void messageThatKeepsFailingIsRetriedWithBackoffThenDeadLettered() {
+        String dlq = RabbitTopology.ENROLLMENT_ACTIVATION_QUEUE + RabbitTopology.DLQ_SUFFIX;
+        UUID eventId = UUID.randomUUID();
+        var unknownEnrollment = new PaymentConfirmed(UUID.randomUUID(), UUID.randomUUID(), Instant.now());
+        long start = System.nanoTime();
+
+        publish(eventId, unknownEnrollment);
+
+        Message deadLettered = rabbitTemplate.receive(dlq, ASYNC_TIMEOUT.toMillis());
+        assertThat(deadLettered).isNotNull();
+        assertThat(deadLettered.getMessageProperties().getMessageId()).isEqualTo(eventId.toString());
+        // Three retries with this suite's backoff (100 + 200 + 400 ms) come first; a message rejected without
+        // retrying, like the malformed one above, reaches the DLQ almost at once.
+        assertThat(Duration.ofNanos(System.nanoTime() - start)).isGreaterThanOrEqualTo(Duration.ofMillis(700));
+        assertThat(queueDepth(RabbitTopology.ENROLLMENT_ACTIVATION_QUEUE)).isZero();
+        // Each failed attempt rolled back its dedup marker, so the event can still be replayed from the DLQ.
+        assertThat(processedEvents.existsById(new ProcessedEventId(eventId, "enrollment-activation"))).isFalse();
+    }
+
     private void publish(UUID eventId, DomainEvent event) {
         Message message = MessageBuilder.withBody(jsonMapper.writeValueAsBytes(event))
                 .setContentType(MessageProperties.CONTENT_TYPE_JSON)

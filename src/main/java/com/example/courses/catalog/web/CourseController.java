@@ -9,6 +9,7 @@ import com.example.courses.shared.application.CursorPage;
 import com.example.courses.shared.security.CurrentUser;
 import com.example.courses.shared.web.PageResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -16,6 +17,7 @@ import jakarta.validation.constraints.Min;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -28,6 +30,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
@@ -50,6 +53,9 @@ class CourseController {
     @PostMapping
     @PreAuthorize("hasRole('ADMIN') or @access.isInstructor(authentication, #request.instructorId())")
     @Operation(summary = "Create a course as DRAFT. ADMIN, or an INSTRUCTOR for their own courses")
+    @ApiResponse(responseCode = "404", description = "The category or the instructor doesn't exist")
+    @ApiResponse(responseCode = "422", description = "The category is archived")
+    @ResponseStatus(HttpStatus.CREATED)
     ResponseEntity<CourseView> create(@Valid @RequestBody CreateCourseRequest request) {
         CourseView created = courses.createDraft(request.terms(), request.categoryId(), request.instructorId());
         var location = ServletUriComponentsBuilder.fromCurrentRequest().path("/{id}").buildAndExpand(created.id());
@@ -90,6 +96,9 @@ class CourseController {
     @PreAuthorize(ADMIN_OR_COURSE_INSTRUCTOR)
     @Operation(summary = "Update a course's details (capacity cannot drop below seats already taken). "
             + "ADMIN or the course's instructor")
+    @ApiResponse(responseCode = "200", description = "The updated course")
+    @ApiResponse(responseCode = "409", description = "The course was modified concurrently; reload it and retry")
+    @ApiResponse(responseCode = "422", description = "The capacity is lower than the seats already taken")
     CourseView update(@PathVariable UUID id, @Valid @RequestBody UpdateCourseRequest request) {
         return courses.update(id, request.terms());
     }
@@ -98,6 +107,8 @@ class CourseController {
     @PreAuthorize(ADMIN_OR_COURSE_INSTRUCTOR)
     @Operation(summary = "Publish a DRAFT course so students can enroll (409 from any other status). "
             + "ADMIN or the course's instructor")
+    @ApiResponse(responseCode = "200", description = "The course, now PUBLISHED")
+    @ApiResponse(responseCode = "409", description = "The course isn't DRAFT")
     CourseView publish(@PathVariable UUID id) {
         return courses.publish(id);
     }
@@ -105,6 +116,8 @@ class CourseController {
     @PostMapping("/{id}/archive")
     @PreAuthorize(ADMIN_OR_COURSE_INSTRUCTOR)
     @Operation(summary = "Archive a course; it stops accepting enrollments. ADMIN or the course's instructor")
+    @ApiResponse(responseCode = "200", description = "The course, now ARCHIVED")
+    @ApiResponse(responseCode = "409", description = "The course is already archived")
     CourseView archive(@PathVariable UUID id) {
         return courses.archive(id);
     }
@@ -113,6 +126,8 @@ class CourseController {
     @PreAuthorize(ADMIN_OR_COURSE_INSTRUCTOR)
     @Operation(summary = "Delete a DRAFT course (published courses must be archived instead). "
             + "ADMIN or the course's instructor")
+    @ApiResponse(responseCode = "409", description = "The course isn't DRAFT")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
     ResponseEntity<Void> delete(@PathVariable UUID id) {
         courses.delete(id);
         return ResponseEntity.noContent().build();

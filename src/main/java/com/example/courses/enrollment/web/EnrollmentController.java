@@ -4,10 +4,12 @@ import com.example.courses.enrollment.application.CourseEnrollmentView;
 import com.example.courses.enrollment.application.EnrollmentService;
 import com.example.courses.enrollment.application.EnrollmentView;
 import com.example.courses.enrollment.application.StudentEnrollmentView;
+import com.example.courses.enrollment.domain.EnrollmentStatus;
 import com.example.courses.shared.security.CurrentUser;
 import com.example.courses.shared.web.PageResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -18,6 +20,7 @@ import jakarta.validation.constraints.Size;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -28,6 +31,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
@@ -52,6 +57,12 @@ class EnrollmentController {
                     + "as PENDING_PAYMENT and becomes ACTIVE once the payment is confirmed asynchronously. "
                     + "Retrying with the same Idempotency-Key returns the original enrollment; reusing it for a "
                     + "different request returns 422. 409 when the course is full or the student is already enrolled.")
+    @ApiResponse(responseCode = "404", description = "The course doesn't exist")
+    @ApiResponse(responseCode = "409",
+            description = "The course is full or not PUBLISHED, or the student is already enrolled in it")
+    @ApiResponse(responseCode = "422", description = "The Idempotency-Key was already used for a different request")
+    @ApiResponse(responseCode = "429", description = "Too many enrollment attempts; retry after Retry-After seconds")
+    @ResponseStatus(HttpStatus.CREATED)
     ResponseEntity<EnrollmentView> enroll(
             @Parameter(description = "Client-generated unique key (e.g. a UUID) identifying this enrollment attempt")
             @RequestHeader(IDEMPOTENCY_KEY_HEADER) @NotBlank @Size(max = 100) String idempotencyKey,
@@ -76,6 +87,9 @@ class EnrollmentController {
     @Operation(summary = "Update progress of an ACTIVE enrollment. ADMIN or its student",
             description = "Progress cannot go backwards. Reaching 100 completes the enrollment and triggers "
                     + "certificate issuance asynchronously.")
+    @ApiResponse(responseCode = "200", description = "The enrollment; COMPLETED when the progress reaches 100")
+    @ApiResponse(responseCode = "409", description = "The enrollment isn't ACTIVE, or it was modified concurrently")
+    @ApiResponse(responseCode = "422", description = "The progress is lower than the current one")
     EnrollmentView updateProgress(@PathVariable UUID id, @Valid @RequestBody ProgressRequest request) {
         return enrollments.updateProgress(id, request.progress());
     }
@@ -83,26 +97,33 @@ class EnrollmentController {
     @PostMapping("/api/enrollments/{id}/cancel")
     @PreAuthorize("hasRole('ADMIN') or @access.ownsEnrollment(authentication, #id)")
     @Operation(summary = "Cancel a PENDING_PAYMENT or ACTIVE enrollment and release its seat. ADMIN or its student")
+    @ApiResponse(responseCode = "200", description = "The enrollment, now CANCELLED")
+    @ApiResponse(responseCode = "409",
+            description = "The enrollment is already COMPLETED or CANCELLED, or it was modified concurrently")
     EnrollmentView cancel(@PathVariable UUID id) {
         return enrollments.cancel(id);
     }
 
     @GetMapping("/api/courses/{courseId}/enrollments")
     @PreAuthorize("hasRole('ADMIN') or @access.teachesCourse(authentication, #courseId)")
-    @Operation(summary = "List the students enrolled in a course. ADMIN or the course's instructor")
+    @Operation(summary = "List the students enrolled in a course. ADMIN or the course's instructor",
+            description = "Optional filter: status of the enrollment.")
     PageResponse<CourseEnrollmentView> studentsOfCourse(
             @PathVariable UUID courseId,
+            @RequestParam(required = false) EnrollmentStatus status,
             @ParameterObject @PageableDefault(size = 20, sort = "enrolledAt") Pageable pageable) {
-        return PageResponse.from(enrollments.listStudentsOfCourse(courseId, pageable));
+        return PageResponse.from(enrollments.listStudentsOfCourse(courseId, status, pageable));
     }
 
     @GetMapping("/api/students/{studentId}/enrollments")
     @PreAuthorize("hasRole('ADMIN') or @access.isStudent(authentication, #studentId)")
-    @Operation(summary = "List the courses a student is enrolled in. ADMIN or the student themselves")
+    @Operation(summary = "List the courses a student is enrolled in. ADMIN or the student themselves",
+            description = "Optional filter: status of the enrollment.")
     PageResponse<StudentEnrollmentView> coursesOfStudent(
             @PathVariable UUID studentId,
+            @RequestParam(required = false) EnrollmentStatus status,
             @ParameterObject @PageableDefault(size = 20, sort = "enrolledAt") Pageable pageable) {
-        return PageResponse.from(enrollments.listCoursesOfStudent(studentId, pageable));
+        return PageResponse.from(enrollments.listCoursesOfStudent(studentId, status, pageable));
     }
 
     record EnrollRequest(@NotNull UUID courseId) {

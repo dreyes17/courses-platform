@@ -12,6 +12,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
@@ -30,9 +31,13 @@ class StudentController {
 
     @GetMapping
     @PreAuthorize("hasRole('ADMIN')")
-    @Operation(summary = "List students. ADMIN only")
-    PageResponse<StudentView> list(@ParameterObject @PageableDefault(size = 20, sort = "lastName") Pageable pageable) {
-        return PageResponse.from(students.list(pageable));
+    @Operation(summary = "List students. ADMIN only",
+            description = "Optional filters, combinable: name (first or last name) and email, both "
+                    + "case-insensitive substrings.")
+    PageResponse<StudentView> list(@RequestParam(required = false) String name,
+                                   @RequestParam(required = false) String email,
+                                   @ParameterObject @PageableDefault(size = 20, sort = "lastName") Pageable pageable) {
+        return PageResponse.from(students.list(name, email, pageable));
     }
 
     @GetMapping("/{id}")

@@ -66,8 +66,9 @@ public class InstructorService {
     }
 
     @Transactional(readOnly = true)
-    public Page<InstructorView> list(Pageable pageable) {
-        return instructors.findAll(pageable).map(mapper::toView);
+    public Page<InstructorView> list(String nameContains, String emailContains, Pageable pageable) {
+        return instructors.findAll(InstructorRepository.matching(nameContains, emailContains), pageable)
+                .map(mapper::toView);
     }
 
     private Instructor find(UUID id) {

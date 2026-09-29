@@ -1,6 +1,7 @@
 package com.example.courses.catalog.application;
 
 import com.example.courses.catalog.domain.Category;
+import com.example.courses.catalog.domain.CategoryStatus;
 import com.example.courses.catalog.repository.CategoryRepository;
 import com.example.courses.catalog.repository.CourseRepository;
 import com.example.courses.shared.application.DuplicateResourceException;
@@ -92,10 +93,15 @@ public class CategoryService {
         return mapper.toView(find(id));
     }
 
+    /**
+     * Only the unfiltered list is cached: it's the one clients read over and over, while filtered pages rarely
+     * repeat and would only crowd it out.
+     */
     @Transactional(readOnly = true)
-    @Cacheable(cacheNames = CacheConfig.CATEGORY_PAGES, key = "#pageable")
-    public Page<CategoryView> list(Pageable pageable) {
-        return categories.findAll(pageable).map(mapper::toView);
+    @Cacheable(cacheNames = CacheConfig.CATEGORY_PAGES, key = "#pageable",
+            condition = "#nameContains == null and #status == null")
+    public Page<CategoryView> list(String nameContains, CategoryStatus status, Pageable pageable) {
+        return categories.findAll(CategoryRepository.matching(nameContains, status), pageable).map(mapper::toView);
     }
 
     private Category find(UUID id) {

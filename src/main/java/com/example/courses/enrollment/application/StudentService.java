@@ -36,7 +36,8 @@ public class StudentService {
     }
 
     @Transactional(readOnly = true)
-    public Page<StudentView> list(Pageable pageable) {
-        return students.findAll(pageable).map(mapper::toView);
+    public Page<StudentView> list(String nameContains, String emailContains, Pageable pageable) {
+        return students.findAll(StudentRepository.matching(nameContains, emailContains), pageable)
+                .map(mapper::toView);
     }
 }
