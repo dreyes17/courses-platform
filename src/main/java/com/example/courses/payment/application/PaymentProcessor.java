@@ -68,7 +68,7 @@ public class PaymentProcessor {
     }
 
     private void decline(Payment payment, String reason) {
-        payment.fail();
+        payment.fail(reason);
         outbox.record(new PaymentFailed(payment.getId(), payment.getEnrollment().getId(), reason, Instant.now()));
         metrics.paymentFailed();
         log.info("Payment {} failed: {}", payment.getId(), reason);

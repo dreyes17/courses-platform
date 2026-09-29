@@ -58,6 +58,8 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.POST, "/api/auth/token", "/api/auth/register").permitAll()
+                        // Certificate verification: whoever is shown a certificate checks its code, without an account.
+                        .requestMatchers(HttpMethod.GET, "/api/certificates/*").permitAll()
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2

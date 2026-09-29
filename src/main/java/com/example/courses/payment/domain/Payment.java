@@ -38,6 +38,9 @@ public class Payment extends BaseEntity {
     @Column(name = "idempotency_key", nullable = false, unique = true)
     private String idempotencyKey;
 
+    @Column(name = "failure_reason", columnDefinition = "text")
+    private String failureReason;
+
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -68,11 +71,12 @@ public class Payment extends BaseEntity {
         status = PaymentStatus.CONFIRMED;
     }
 
-    public void fail() {
+    public void fail(String reason) {
         if (status != PaymentStatus.PENDING) {
             throw new InvalidStateTransitionException("Payment", getId(), status, "be marked as failed");
         }
         status = PaymentStatus.FAILED;
+        failureReason = Objects.requireNonNull(reason, "reason");
     }
 
     public Enrollment getEnrollment() {
@@ -93,6 +97,11 @@ public class Payment extends BaseEntity {
 
     public String getIdempotencyKey() {
         return idempotencyKey;
+    }
+
+    /** Null unless the payment FAILED. */
+    public String getFailureReason() {
+        return failureReason;
     }
 
     public Instant getCreatedAt() {

@@ -82,6 +82,7 @@ class PaymentProcessorTest {
         processor.process(EVENT_ID, event());
 
         assertThat(payment.getStatus()).isEqualTo(PaymentStatus.FAILED);
+        assertThat(payment.getFailureReason()).isEqualTo("insufficient funds");
         verify(metrics).paymentFailed();
         assertThat(recordedEvent()).isInstanceOfSatisfying(PaymentFailed.class,
                 failed -> assertThat(failed.reason()).isEqualTo("insufficient funds"));
@@ -97,6 +98,7 @@ class PaymentProcessorTest {
 
         verifyNoInteractions(gateway);
         assertThat(payment.getStatus()).isEqualTo(PaymentStatus.FAILED);
+        assertThat(payment.getFailureReason()).isEqualTo("Enrollment is no longer awaiting payment");
         assertThat(recordedEvent()).isInstanceOf(PaymentFailed.class);
     }
 

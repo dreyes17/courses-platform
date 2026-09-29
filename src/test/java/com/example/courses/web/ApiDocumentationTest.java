@@ -60,6 +60,10 @@ class ApiDocumentationTest extends ApiTestSupport {
                 .containsExactly("200", "400", "401", "429");
         assertThat(operation("/api/auth/token", "post").get("responses").get("401").get("description").asString())
                 .isEqualTo("Invalid email or password");
+        assertThat(responseCodes("/api/certificates/{code}", "get"))
+                .as("public, no role rule, addresses a certificate by its code")
+                .containsExactly("200", "400", "404");
+        assertThat(operation("/api/certificates/{code}", "get").get("security")).as("no bearer token").isEmpty();
     }
 
     @Test
