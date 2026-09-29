@@ -6,6 +6,7 @@ import com.example.courses.catalog.domain.CourseStatus;
 import org.springframework.data.jpa.domain.Specification;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -44,6 +45,27 @@ public final class CourseSpecifications {
             filters.add((root, query, cb) -> cb.equal(root.get("status"), status));
         }
         return Specification.allOf(filters);
+    }
+
+    /**
+     * Keyset condition for the "newest first" order (createdAt desc, id desc): only the courses after the given
+     * position. The id breaks ties between courses created in the same instant.
+     */
+    public static Specification<Course> createdBefore(Instant createdAt, UUID id) {
+        return (root, query, cb) -> cb.or(
+                cb.lessThan(root.get("createdAt"), createdAt),
+                cb.and(cb.equal(root.get("createdAt"), createdAt), cb.lessThan(root.get("id"), id)));
+    }
+
+    /** Loads category and instructor in the same query (to-one, so it doesn't multiply rows). */
+    public static Specification<Course> fetchingCategoryAndInstructor() {
+        return (root, query, cb) -> {
+            if (query.getResultType() != Long.class) {
+                root.fetch("category");
+                root.fetch("instructor");
+            }
+            return cb.conjunction();
+        };
     }
 
     private static String escapeLike(String value) {

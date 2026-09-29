@@ -2,6 +2,7 @@ package com.example.courses.shared.web;
 
 import com.example.courses.idempotency.application.IdempotencyKeyReusedException;
 import com.example.courses.identity.application.InvalidCredentialsException;
+import com.example.courses.shared.application.InvalidCursorException;
 import com.example.courses.shared.application.ResourceNotFoundException;
 import com.example.courses.shared.domain.BusinessRuleViolationException;
 import com.example.courses.shared.domain.ConflictException;
@@ -83,6 +84,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     ProblemDetail handleUnknownSortProperty(PropertyReferenceException e) {
         return problem(HttpStatus.BAD_REQUEST, "Invalid sort property",
                 "Cannot sort by '%s'".formatted(e.getPropertyName()));
+    }
+
+    @ExceptionHandler(InvalidCursorException.class)
+    ProblemDetail handleInvalidCursor(InvalidCursorException e) {
+        return problem(HttpStatus.BAD_REQUEST, "Invalid cursor", e.getMessage());
     }
 
     @ExceptionHandler(Exception.class)

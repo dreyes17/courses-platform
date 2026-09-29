@@ -245,7 +245,7 @@ respuesta.
 | `/api/categories` | crear, listar, obtener, renombrar (`PUT`), `POST /{id}/archive`, `POST /{id}/activate`, borrar (409 si tiene cursos) |
 | `/api/auth` | `POST /register` (alta pública de estudiante), `POST /token` (login → JWT) |
 | `/api/instructors` | crear instructor y su cuenta (email único), listar, obtener, actualizar perfil, borrar (409 si tiene cursos) |
-| `/api/courses` | crear (en `DRAFT`), buscar, obtener, actualizar, `POST /{id}/publish`, `POST /{id}/archive`, borrar (solo `DRAFT`) |
+| `/api/courses` | crear (en `DRAFT`), buscar, buscar con cursor (`GET /scroll`), obtener, actualizar, `POST /{id}/publish`, `POST /{id}/archive`, borrar (solo `DRAFT`) |
 | `/api/students` | listar, obtener |
 | `/api/enrollments` | inscribir (`Idempotency-Key` obligatoria; el estudiante sale del token), obtener, `PUT /{id}/progress`, `POST /{id}/cancel` |
 | `/api/courses/{id}/enrollments` | estudiantes inscritos en un curso |
@@ -256,7 +256,8 @@ respuesta.
   del dominio.
 - **Paginación en todos los listados.** Aceptan `page`, `size` (por defecto 20, máximo 100) y `sort`
   (propiedades de la entidad, p. ej. `sort=price,desc`). Responden con
-  `{content, page, size, totalElements, totalPages}`. Ningún endpoint devuelve una tabla entera.
+  `{content, page, size, totalElements, totalPages}`. Ningún endpoint devuelve una tabla entera. La búsqueda
+  de cursos ofrece además paginación por cursor (ver [Paginación por cursor](#paginación-por-cursor)).
 - **Búsqueda de cursos.** Todos los filtros son opcionales y combinables: `categoryId`, `level`, `minPrice`,
   `maxPrice`, `title` (subcadena sin distinguir mayúsculas) y `withAvailableSeats=true`, además de `status`.
 - **Correlación.** Cualquier petición puede enviar `X-Correlation-Id` (si no, se genera uno), y la respuesta
@@ -266,6 +267,39 @@ respuesta.
   cursos de un estudiante se cargan con `@EntityGraph` sobre relaciones *to-one*, así que la paginación
   sigue haciéndose en SQL. `QueryEfficiencyTest` cuenta las sentencias SQL del hilo: cada página cuesta como
   máximo 2 consultas, sea cual sea su tamaño.
+
+### Paginación por cursor
+
+`GET /api/courses/scroll` acepta los mismos filtros que la búsqueda y ordena de más reciente a más antiguo,
+paginando por *keyset*. El `nextCursor` de cada respuesta marca el último curso devuelto. Se envía como
+`cursor` para pedir la página siguiente, y es `null` en la última:
+
+```bash
+curl "localhost:8080/api/courses/scroll?size=20&level=BEGINNER" -H "Authorization: Bearer $TOKEN"
+# {"content": [ ... ], "nextCursor": "MjAyNi0wOS0yOVQxMjoxMToyOS4xNDVafDFm..."}
+curl "localhost:8080/api/courses/scroll?size=20&level=BEGINNER&cursor=MjAyNi0wOS0y..." -H "Authorization: Bearer $TOKEN"
+```
+
+Diferencias con la paginación por número de página, que se mantiene en `GET /api/courses`:
+
+- **Sin duplicados ni huecos.** Con `page=1`, la BD salta las N primeras filas en el momento de la consulta.
+  Si entre dos páginas se crea un curso, todo se desplaza una fila y el cliente ve un curso repetido. El
+  cursor apunta a una posición concreta, `(createdAt, id)`, así que la página siguiente empieza justo después
+  del último curso visto. `CursorPaginationTest` lo reproduce: crea un curso a mitad del recorrido y
+  comprueba que con el cursor no se repite ni se salta nada, mientras que con `page=1` se repite un curso.
+- **Coste constante.** La condición `(created_at, id) < cursor` recorre el índice
+  `(status, created_at DESC, id DESC)` (`V4__courses_keyset_index.sql`), así que la página mil cuesta lo mismo
+  que la primera. Con `OFFSET`, la BD tiene que recorrer y descartar todas las filas anteriores.
+- **Sin consulta de conteo.** Se leen `size + 1` filas: si llega la extra, hay página siguiente. Cada página
+  es una sola consulta, con categoría e instructor en el mismo `JOIN` (`QueryEfficiencyTest`).
+- **Orden total.** El `id` desempata los cursos creados en el mismo instante, así que ningún curso puede
+  quedar fuera por un empate.
+- **Cursor opaco.** Es Base64 de `createdAt|id`. Uno manipulado o inventado devuelve 400
+  (`Invalid cursor`).
+
+Cuándo usar cada una: el cursor, para recorrer listas largas o sin fin (el scroll de una app, una
+exportación); el número de página, cuando hace falta saltar a una página concreta, ordenar por otros campos
+o conocer el total.
 
 ### Errores
 
@@ -737,7 +771,7 @@ invalidaciones no cambian.
 
 ## Tests
 
-`./mvnw test` ejecuta los 103 tests en unos 35 segundos. Casi todos los de integración comparten un único
+`./mvnw test` ejecuta los 109 tests en unos 35 segundos. Casi todos los de integración comparten un único
 contexto de Spring y un único par de contenedores (`AbstractIntegrationTest`), por eso la suite es rápida pese
 a usar PostgreSQL y RabbitMQ reales. Las excepciones son `ManagementPortTest`, que necesita servidores reales
 en dos puertos distintos, y `VirtualThreadsTest`, que reutiliza ese mismo contexto porque necesita el Tomcat
@@ -754,6 +788,7 @@ real.
 | **Virtual threads** | Peticiones HTTP, consumidores RabbitMQ y tareas programadas se ejecutan en virtual threads | `VirtualThreadsTest` |
 | **Observabilidad** | `correlationId` propagado de la petición HTTP al consumidor a través de RabbitMQ, ids no seguros sustituidos, contadores por resultado, *gauges* de DLQ y de outbox `FAILED` | `ObservabilityTest` |
 | **Caché** | Lecturas servidas desde la caché, invalidación en cada escritura (plazas incluidas), permisos aplicados también en los aciertos, métricas | `CatalogCacheTest` |
+| **Paginación por cursor** | Recorrido completo sin repetir ni saltar cursos, curso creado a mitad del recorrido, solo `PUBLISHED` para estudiantes, cursor inválido, tamaño máximo | `CursorPaginationTest` |
 | **Contrato** | Campos del JSON de los eventos publicados | `EventContractTest` |
 
 Para comprobar que los tests no pasan por casualidad, quité a propósito cinco protecciones y confirmé que los
@@ -775,7 +810,7 @@ paralelo:
 
 | Job | Qué hace |
 |---|---|
-| Build and test | `./mvnw -B verify` con Java 21 (Temurin): compila y ejecuta los 103 tests. Los de integración usan el Docker que ya traen los runners `ubuntu-latest`, así que Testcontainers funciona sin configuración. Si algo falla, sube los informes de Surefire como artefacto. |
+| Build and test | `./mvnw -B verify` con Java 21 (Temurin): compila y ejecuta los 109 tests. Los de integración usan el Docker que ya traen los runners `ubuntu-latest`, así que Testcontainers funciona sin configuración. Si algo falla, sube los informes de Surefire como artefacto. |
 | Docker image and deployment config | Construye la imagen del `Dockerfile`, valida `docker-compose.yml` con `.env.example` y valida la configuración y las alertas de Prometheus con `promtool`. |
 
 - Reutiliza las dependencias de Maven entre ejecuciones (caché de `setup-java`), tiene permisos de solo

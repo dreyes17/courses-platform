@@ -5,11 +5,14 @@ import com.example.courses.catalog.application.CourseService;
 import com.example.courses.catalog.application.CourseView;
 import com.example.courses.catalog.web.CatalogRequests.CreateCourseRequest;
 import com.example.courses.catalog.web.CatalogRequests.UpdateCourseRequest;
+import com.example.courses.shared.application.CursorPage;
 import com.example.courses.shared.security.CurrentUser;
 import com.example.courses.shared.web.PageResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
@@ -24,6 +27,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
@@ -61,6 +65,19 @@ class CourseController {
                                     @ParameterObject @PageableDefault(size = 20, sort = "createdAt") Pageable pageable,
                                     @AuthenticationPrincipal Jwt jwt) {
         return PageResponse.from(courses.search(criteria, pageable, onlyPublishedFor(jwt)));
+    }
+
+    @GetMapping("/scroll")
+    @Operation(summary = "Search courses with cursor (keyset) pagination, newest first",
+            description = "Same filters as GET /api/courses. Omit cursor for the first page, then send the "
+                    + "nextCursor of each response as cursor; nextCursor is null on the last page. Unlike page "
+                    + "numbers, courses created or removed while scrolling never cause duplicates or gaps. "
+                    + "Students only ever see PUBLISHED courses.")
+    CursorPage<CourseView> scroll(@ParameterObject CourseSearchCriteria criteria,
+                                  @RequestParam(required = false) String cursor,
+                                  @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
+                                  @AuthenticationPrincipal Jwt jwt) {
+        return courses.scroll(criteria, cursor, size, onlyPublishedFor(jwt));
     }
 
     @GetMapping("/{id}")

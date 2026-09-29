@@ -78,4 +78,24 @@ class QueryEfficiencyTest extends AbstractIntegrationTest {
                 .hasSizeLessThanOrEqualTo(2)
                 .anySatisfy(sql -> assertThat(sql).containsIgnoringCase("join instructors"));
     }
+
+    @Test
+    void courseScrollLoadsAPageInASingleQuery() {
+        for (int i = 0; i < ROWS; i++) {
+            publishedCourse(5, new BigDecimal("30.00"));
+        }
+        var criteria = new CourseSearchCriteria(null, null, null, null, null, null, null);
+
+        SqlStatementCounter.reset();
+        var page = courseService.scroll(criteria, null, ROWS, false);
+
+        assertThat(page.content()).hasSize(ROWS)
+                .allSatisfy(course -> assertThat(course.categoryName()).isNotBlank())
+                .allSatisfy(course -> assertThat(course.instructorName()).isNotBlank());
+        assertThat(SqlStatementCounter.statements())
+                .as("one query with joins and no count query: size + 1 rows tell whether there is a next page")
+                .hasSize(1)
+                .allSatisfy(sql -> assertThat(sql).containsIgnoringCase("join instructors")
+                        .as("rows limited by the database, not in memory").containsPattern("(?i)fetch first|limit"));
+    }
 }
