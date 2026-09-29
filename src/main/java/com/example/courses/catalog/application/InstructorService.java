@@ -6,6 +6,10 @@ import com.example.courses.catalog.repository.InstructorRepository;
 import com.example.courses.shared.application.DuplicateResourceException;
 import com.example.courses.shared.application.ResourceInUseException;
 import com.example.courses.shared.application.ResourceNotFoundException;
+import com.example.courses.shared.config.CacheConfig;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -34,7 +38,11 @@ public class InstructorService {
         return mapper.toView(instructors.save(Instructor.create(name, email, bio)));
     }
 
+    /** Course views embed the instructor name, so they are evicted too. */
     @Transactional
+    @Caching(evict = {
+            @CacheEvict(cacheNames = CacheConfig.INSTRUCTORS, key = "#id"),
+            @CacheEvict(cacheNames = CacheConfig.COURSES, allEntries = true)})
     public InstructorView updateProfile(UUID id, String name, String bio) {
         Instructor instructor = find(id);
         instructor.updateProfile(name, bio);
@@ -42,6 +50,7 @@ public class InstructorService {
     }
 
     @Transactional
+    @CacheEvict(cacheNames = CacheConfig.INSTRUCTORS, key = "#id")
     public void delete(UUID id) {
         Instructor instructor = find(id);
         if (courses.existsByInstructorId(id)) {
@@ -51,6 +60,7 @@ public class InstructorService {
     }
 
     @Transactional(readOnly = true)
+    @Cacheable(cacheNames = CacheConfig.INSTRUCTORS, key = "#id")
     public InstructorView get(UUID id) {
         return mapper.toView(find(id));
     }

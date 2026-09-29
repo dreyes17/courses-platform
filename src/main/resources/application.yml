@@ -58,6 +58,10 @@ app:
     poll-interval: 500ms
     batch-size: 100
     confirm-timeout: 5s
+  cache:
+    # Upper bound on staleness for catalog reads; writes evict immediately (see CacheConfig).
+    catalog-ttl: ${CACHE_CATALOG_TTL:10m}
+    course-ttl: ${CACHE_COURSE_TTL:1m}
   payments:
     currency: EUR
     simulation:

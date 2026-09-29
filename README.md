@@ -155,7 +155,7 @@ entrada, delegan en `application` y traducen el resultado.
 | `messaging.config` | Topología RabbitMQ declarada por código |
 | `idempotency` | Idempotencia a nivel HTTP para la cabecera `Idempotency-Key` |
 | `identity` | Cuentas de usuario (`users`), registro de estudiantes, alta de instructores, login y emisión de JWT |
-| `shared` | `BaseEntity`, jerarquía de excepciones de dominio, `GlobalExceptionHandler` (errores RFC 9457), `PageResponse`, `MappingConfig` (MapStruct), OpenAPI y `shared.security` (filtros, JWT, reglas de acceso) |
+| `shared` | `BaseEntity`, jerarquía de excepciones de dominio, `GlobalExceptionHandler` (errores RFC 9457), `PageResponse`, `MappingConfig` (MapStruct), `CacheConfig` (caché del catálogo), OpenAPI y `shared.security` (filtros, JWT, reglas de acceso) |
 
 ### Separación de responsabilidades (punto 6 del enunciado)
 
@@ -383,6 +383,7 @@ estas métricas de negocio y operación:
 | `courses_certificates_issued_total` | contador | Certificados emitidos |
 | `courses_messaging_dlq_messages{queue}` | *gauge* | Mensajes esperando en cada DLQ |
 | `courses_outbox_events{status}` | *gauge* | Eventos del outbox `pending` (retraso de publicación) y `failed` (requieren intervención) |
+| `cache_gets_total{cache,result}` | contador | Lecturas de cada caché del catálogo, `hit` o `miss` (ver [Caché del catálogo](#caché-del-catálogo)) |
 
 - **Solo se cuenta lo que confirma.** Las inscripciones creadas, los pagos y los certificados se
   incrementan después del *commit*. Una operación que se revierte no infla la métrica, y un reintento
@@ -617,9 +618,64 @@ Tras agotar los reintentos, ese mensaje se mueve a la DLQ en vez de bloquear la 
 resuelve "este mensaje ya lo procesé, no lo proceses otra vez"; la DLQ resuelve "este mensaje no se puede
 procesar, sácalo de la cola". Son mecanismos independientes y complementarios.
 
+## Caché del catálogo
+
+Spring Cache con Caffeine (en memoria), configurado en `shared.config.CacheConfig`:
+
+| Caché | Qué guarda | TTL | Se invalida al... |
+|---|---|---|---|
+| `categories` | categoría por id | 10 min | editar, archivar, activar o borrar esa categoría |
+| `category-pages` | páginas del listado de categorías (clave: `page`, `size`, `sort`) | 10 min | cualquier cambio en categorías |
+| `instructors` | instructor por id | 10 min | editar o borrar ese instructor |
+| `courses` | curso por id, con sus plazas disponibles | 1 min | editar, publicar, archivar o borrar el curso; **reservar o liberar una plaza**; renombrar su categoría o su instructor |
+
+Los TTL se configuran con `CACHE_CATALOG_TTL` y `CACHE_COURSE_TTL`.
+
+**Qué no se cachea: la búsqueda de cursos.** Combina seis filtros con paginación y orden, así que la misma
+clave casi nunca se repite. Además incluye el filtro de plazas disponibles, que cambia con cada inscripción:
+cada reserva obligaría a invalidar todas las búsquedas. Mucho coste de invalidación para pocos aciertos. El
+detalle de un curso sí compensa: es la consulta que más se repite, y se invalida con precisión, solo para
+ese curso.
+
+**Cómo se evita servir datos viejos:**
+
+- **Las plazas nunca se quedan atrás.** `availableSeats` no cambia en `CourseService`, sino en el `UPDATE`
+  atómico. Por eso la invalidación está en el propio repositorio: `@CacheEvict` sobre `tryReserveSeat` y
+  `releaseSeat`. Cualquier camino que toque las plazas (inscribir, cancelar, pago fallido) invalida el curso,
+  sin que cada servicio tenga que acordarse.
+- **Invalidación después del *commit*.** El `CacheManager` es *transaction-aware*: una invalidación dentro
+  de una transacción se aplica al confirmarse. Si se aplicara antes, otra petición podría volver a cachear la
+  fila antigua en ese intervalo; y si hay *rollback*, no se invalida nada.
+- **Los permisos no dependen de la caché.** Un curso se cachea sea cual sea su estado, pero la regla "los
+  estudiantes solo ven cursos `PUBLISHED`" se comprueba en cada llamada, también en los aciertos. Por eso la
+  caché vive en un bean aparte, `CourseViewCache`: la comprobación nunca se salta, y el proxy de Spring
+  intercepta la llamada (no intercepta las que un bean se hace a sí mismo).
+- **Nombres embebidos.** La vista de un curso incluye el nombre de su categoría y de su instructor, así que
+  renombrar cualquiera de los dos vacía la caché de cursos. Es una operación de administración poco
+  frecuente.
+
+**Límite conocido: la caché es local a cada instancia.** Con varias instancias, un cambio solo invalida la
+caché de la instancia que lo hizo, y las demás pueden servir el dato anterior durante, como mucho, el TTL:
+1 minuto para cursos y 10 para el resto. Las reservas no se ven afectadas, porque el `UPDATE` atómico lee
+siempre la BD; lo que puede quedar desfasado es la cifra de plazas que se muestra. Para este tamaño es
+aceptable. Si no lo fuera, bastaría con cambiar el `CacheManager` por uno de Redis: las anotaciones y las
+invalidaciones no cambian.
+
+**Métricas.** `cache_gets_total{cache, result="hit"|"miss"}`, junto con `cache_puts_total` y
+`cache_evictions_total`, en `/actuator/prometheus`: la tasa de aciertos de cada caché se ve directamente.
+
+`CatalogCacheTest` comprueba que:
+
+- la segunda lectura no llega a la BD;
+- un cambio hecho a través de la aplicación se ve de inmediato;
+- las plazas están al día justo después de inscribir y de cancelar;
+- renombrar un instructor refresca sus cursos;
+- un borrador que ha cacheado un ADMIN sigue oculto para los estudiantes;
+- se exportan las métricas de aciertos.
+
 ## Tests
 
-`./mvnw test` ejecuta los 95 tests en unos 30 segundos. Casi todos los de integración comparten un único
+`./mvnw test` ejecuta los 100 tests en unos 30 segundos. Casi todos los de integración comparten un único
 contexto de Spring y un único par de contenedores (`AbstractIntegrationTest`), por eso la suite es rápida pese
 a usar PostgreSQL y RabbitMQ reales. La excepción es `ManagementPortTest`, que necesita servidores reales en
 dos puertos distintos.
@@ -633,16 +689,19 @@ dos puertos distintos.
 | **HTTP** (MockMvc) | Flujo end-to-end por la API con cada rol, mapeo de errores a `problem+json`, 401/403 y reglas de propiedad, ausencia de N+1 | `EnrollmentApiTest`, `ErrorHandlingApiTest`, `SecurityApiTest`, `QueryEfficiencyTest` |
 | **Puertos reales** | Actuator accesible sin credenciales solo en el puerto de gestión, health y readiness con BD y broker, API protegida y ausente en ese puerto | `ManagementPortTest` |
 | **Observabilidad** | `correlationId` propagado de la petición HTTP al consumidor a través de RabbitMQ, ids no seguros sustituidos, contadores por resultado, *gauges* de DLQ y de outbox `FAILED` | `ObservabilityTest` |
+| **Caché** | Lecturas servidas desde la caché, invalidación en cada escritura (plazas incluidas), permisos aplicados también en los aciertos, métricas | `CatalogCacheTest` |
 | **Contrato** | Campos del JSON de los eventos publicados | `EventContractTest` |
 
-Para comprobar que los tests no pasan por casualidad, quité a propósito tres protecciones y confirmé que los
+Para comprobar que los tests no pasan por casualidad, quité a propósito cuatro protecciones y confirmé que los
 tests fallaban:
 
 - sin el `@EntityGraph`, `QueryEfficiencyTest` detecta el N+1;
 - sin la comprobación de estado en `PaymentProcessor`, `PaymentProcessorTest` detecta que se cobra una
   inscripción cancelada;
 - sin la cabecera `x-correlation-id` en `OutboxRelay`, `ObservabilityTest` detecta que el id no llega al
-  consumidor.
+  consumidor;
+- sin el `@CacheEvict` de `tryReserveSeat`/`releaseSeat`, `CatalogCacheTest` detecta que el curso sigue
+  mostrando 2 plazas libres después de una inscripción.
 
 ## Limitaciones conocidas
 
@@ -654,6 +713,8 @@ tests fallaban:
   transacción de BD abierta. Con la pasarela simulada no importa. Con una real, convendría separar el cobro
   de la transacción; la clave de idempotencia del pago (`enrollment-<id>`) ya evita cobrar dos veces si se
   reintenta.
+- **Caché local a cada instancia.** Con varias instancias, la cifra de plazas mostrada puede ir hasta 1
+  minuto por detrás en las que no hicieron el cambio (ver [Caché del catálogo](#caché-del-catálogo)).
 - **Filas `FAILED` del outbox.** Requieren intervención manual. Las señala la métrica
   `courses_outbox_events{status="failed"}`, pero no hay un endpoint ni un proceso para republicarlas.
 

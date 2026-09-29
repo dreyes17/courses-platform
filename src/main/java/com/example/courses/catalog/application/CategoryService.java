@@ -6,6 +6,10 @@ import com.example.courses.catalog.repository.CourseRepository;
 import com.example.courses.shared.application.DuplicateResourceException;
 import com.example.courses.shared.application.ResourceInUseException;
 import com.example.courses.shared.application.ResourceNotFoundException;
+import com.example.courses.shared.config.CacheConfig;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -27,6 +31,7 @@ public class CategoryService {
     }
 
     @Transactional
+    @CacheEvict(cacheNames = CacheConfig.CATEGORY_PAGES, allEntries = true)
     public CategoryView create(String name, String description) {
         if (categories.existsByName(name)) {
             throw new DuplicateResourceException("Category", "name", name);
@@ -34,7 +39,12 @@ public class CategoryService {
         return mapper.toView(categories.save(Category.create(name, description)));
     }
 
+    /** Course views embed the category name, so they are evicted too. */
     @Transactional
+    @Caching(evict = {
+            @CacheEvict(cacheNames = CacheConfig.CATEGORIES, key = "#id"),
+            @CacheEvict(cacheNames = CacheConfig.CATEGORY_PAGES, allEntries = true),
+            @CacheEvict(cacheNames = CacheConfig.COURSES, allEntries = true)})
     public CategoryView update(UUID id, String name, String description) {
         Category category = find(id);
         if (categories.existsByNameAndIdNot(name, id)) {
@@ -45,6 +55,9 @@ public class CategoryService {
     }
 
     @Transactional
+    @Caching(evict = {
+            @CacheEvict(cacheNames = CacheConfig.CATEGORIES, key = "#id"),
+            @CacheEvict(cacheNames = CacheConfig.CATEGORY_PAGES, allEntries = true)})
     public CategoryView archive(UUID id) {
         Category category = find(id);
         category.archive();
@@ -52,6 +65,9 @@ public class CategoryService {
     }
 
     @Transactional
+    @Caching(evict = {
+            @CacheEvict(cacheNames = CacheConfig.CATEGORIES, key = "#id"),
+            @CacheEvict(cacheNames = CacheConfig.CATEGORY_PAGES, allEntries = true)})
     public CategoryView activate(UUID id) {
         Category category = find(id);
         category.activate();
@@ -59,6 +75,9 @@ public class CategoryService {
     }
 
     @Transactional
+    @Caching(evict = {
+            @CacheEvict(cacheNames = CacheConfig.CATEGORIES, key = "#id"),
+            @CacheEvict(cacheNames = CacheConfig.CATEGORY_PAGES, allEntries = true)})
     public void delete(UUID id) {
         Category category = find(id);
         if (courses.existsByCategoryId(id)) {
@@ -68,11 +87,13 @@ public class CategoryService {
     }
 
     @Transactional(readOnly = true)
+    @Cacheable(cacheNames = CacheConfig.CATEGORIES, key = "#id")
     public CategoryView get(UUID id) {
         return mapper.toView(find(id));
     }
 
     @Transactional(readOnly = true)
+    @Cacheable(cacheNames = CacheConfig.CATEGORY_PAGES, key = "#pageable")
     public Page<CategoryView> list(Pageable pageable) {
         return categories.findAll(pageable).map(mapper::toView);
     }

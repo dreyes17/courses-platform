@@ -9,6 +9,8 @@ import com.example.courses.catalog.repository.CourseRepository;
 import com.example.courses.catalog.repository.CourseSpecifications;
 import com.example.courses.catalog.repository.InstructorRepository;
 import com.example.courses.shared.application.ResourceNotFoundException;
+import com.example.courses.shared.config.CacheConfig;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -23,13 +25,15 @@ public class CourseService {
     private final CategoryRepository categories;
     private final InstructorRepository instructors;
     private final CatalogViewMapper mapper;
+    private final CourseViewCache courseViews;
 
     public CourseService(CourseRepository courses, CategoryRepository categories, InstructorRepository instructors,
-                         CatalogViewMapper mapper) {
+                         CatalogViewMapper mapper, CourseViewCache courseViews) {
         this.courses = courses;
         this.categories = categories;
         this.instructors = instructors;
         this.mapper = mapper;
+        this.courseViews = courseViews;
     }
 
     @Transactional
@@ -44,6 +48,7 @@ public class CourseService {
     }
 
     @Transactional
+    @CacheEvict(cacheNames = CacheConfig.COURSES, key = "#id")
     public CourseView update(UUID id, CourseTerms terms) {
         Course course = find(id);
         course.updateDetails(terms.title(), terms.description(), terms.durationHours(), terms.level(),
@@ -52,6 +57,7 @@ public class CourseService {
     }
 
     @Transactional
+    @CacheEvict(cacheNames = CacheConfig.COURSES, key = "#id")
     public CourseView publish(UUID id) {
         Course course = find(id);
         course.publish();
@@ -59,6 +65,7 @@ public class CourseService {
     }
 
     @Transactional
+    @CacheEvict(cacheNames = CacheConfig.COURSES, key = "#id")
     public CourseView archive(UUID id) {
         Course course = find(id);
         course.archive();
@@ -66,20 +73,20 @@ public class CourseService {
     }
 
     @Transactional
+    @CacheEvict(cacheNames = CacheConfig.COURSES, key = "#id")
     public void delete(UUID id) {
         Course course = find(id);
         course.assertDeletable();
         courses.delete(course);
     }
 
-    /** With publishedOnly, drafts and archived courses are reported as not found. */
-    @Transactional(readOnly = true)
+    /** With publishedOnly, drafts and archived courses are reported as not found. Served from the cache. */
     public CourseView get(UUID id, boolean publishedOnly) {
-        Course course = find(id);
-        if (publishedOnly && course.getStatus() != CourseStatus.PUBLISHED) {
+        CourseView course = courseViews.get(id);
+        if (publishedOnly && course.status() != CourseStatus.PUBLISHED) {
             throw new ResourceNotFoundException("Course", id);
         }
-        return mapper.toView(course);
+        return course;
     }
 
     @Transactional(readOnly = true)

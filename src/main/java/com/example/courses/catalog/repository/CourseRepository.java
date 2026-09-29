@@ -1,6 +1,8 @@
 package com.example.courses.catalog.repository;
 
 import com.example.courses.catalog.domain.Course;
+import com.example.courses.shared.config.CacheConfig;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
@@ -33,7 +35,9 @@ public interface CourseRepository extends JpaRepository<Course, UUID>, JpaSpecif
     /**
      * Returns 1 if a seat was reserved, 0 otherwise. Bumping {@code version} makes a concurrent
      * optimistic-locked edit of the same course fail instead of overwriting seatsTaken with a stale value.
+     * Evicts the cached course view (after commit), since its availableSeats is now out of date.
      */
+    @CacheEvict(cacheNames = CacheConfig.COURSES, key = "#p0")
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
             update Course c
@@ -44,6 +48,8 @@ public interface CourseRepository extends JpaRepository<Course, UUID>, JpaSpecif
             """)
     int tryReserveSeat(@Param("courseId") UUID courseId);
 
+    /** Evicts the cached course view (after commit), since its availableSeats is now out of date. */
+    @CacheEvict(cacheNames = CacheConfig.COURSES, key = "#p0")
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
             update Course c
