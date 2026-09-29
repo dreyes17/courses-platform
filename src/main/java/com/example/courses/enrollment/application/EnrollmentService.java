@@ -105,6 +105,14 @@ public class EnrollmentService {
         return mapper.toView(findEnrollment(enrollmentId));
     }
 
+    /** Every enrollment in the platform; each null filter is ignored. */
+    @Transactional(readOnly = true)
+    public Page<EnrollmentSummaryView> list(UUID courseId, UUID studentId, EnrollmentStatus status,
+                                            Pageable pageable) {
+        return enrollments.findAll(EnrollmentRepository.matching(courseId, studentId, status), pageable)
+                .map(mapper::toSummaryView);
+    }
+
     /** A null status lists enrollments in any status. */
     @Transactional(readOnly = true)
     public Page<CourseEnrollmentView> listStudentsOfCourse(UUID courseId, EnrollmentStatus status,

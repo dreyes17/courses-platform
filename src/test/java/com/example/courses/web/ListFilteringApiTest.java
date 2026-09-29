@@ -83,6 +83,35 @@ class ListFilteringApiTest extends ApiTestSupport {
     }
 
     @Test
+    void adminListsEveryEnrollmentFilteredByCourseStudentAndStatus() {
+        Account instructor = createInstructor();
+        String courseId = createPublishedCourse(instructor, 5, new BigDecimal("10.00"));
+        String otherCourseId = createPublishedCourse(instructor, 5, new BigDecimal("10.00"));
+        Account student = registerStudent();
+        String inCourse = id(enroll(student.token(), courseId, UUID.randomUUID().toString()));
+        String inOtherCourse = id(enroll(student.token(), otherCourseId, UUID.randomUUID().toString()));
+        post("/api/enrollments/" + inOtherCourse + "/cancel", student.token(), null);
+        String admin = adminToken();
+
+        assertThat(get("/api/enrollments?studentId=" + student.id(), admin))
+                .bodyJson().extractingPath("$.totalElements").isEqualTo(2);
+        var ofCourse = get("/api/enrollments?courseId=" + courseId + "&studentId=" + student.id(), admin);
+        assertThat(ofCourse).bodyJson().extractingPath("$.content[0].enrollmentId").isEqualTo(inCourse);
+        assertThat(ofCourse).bodyJson().extractingPath("$.content[0].studentEmail").isEqualTo(student.email());
+        assertThat(ofCourse).bodyJson().extractingPath("$.content[0].courseTitle").asString().startsWith("Course ");
+        assertThat(get("/api/enrollments?studentId=" + student.id() + "&status=CANCELLED", admin))
+                .bodyJson().extractingPath("$.content[0].enrollmentId").isEqualTo(inOtherCourse);
+        assertThat(get("/api/enrollments?studentId=" + student.id() + "&status=CANCELLED", admin))
+                .bodyJson().extractingPath("$.totalElements").isEqualTo(1);
+    }
+
+    @Test
+    void onlyAdminsListEveryEnrollment() {
+        assertThat(get("/api/enrollments", registerStudent().token())).hasStatus(HttpStatus.FORBIDDEN);
+        assertThat(get("/api/enrollments", createInstructor().token())).hasStatus(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
     void unknownFilterValueReturns400() {
         assertThat(get("/api/categories?status=DELETED", adminToken())).hasStatus(HttpStatus.BAD_REQUEST);
     }

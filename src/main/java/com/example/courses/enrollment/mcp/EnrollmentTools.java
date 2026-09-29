@@ -2,6 +2,7 @@ package com.example.courses.enrollment.mcp;
 
 import com.example.courses.enrollment.application.CourseEnrollmentView;
 import com.example.courses.enrollment.application.EnrollmentService;
+import com.example.courses.enrollment.application.EnrollmentSummaryView;
 import com.example.courses.enrollment.application.EnrollmentView;
 import com.example.courses.enrollment.application.StudentEnrollmentView;
 import com.example.courses.enrollment.application.StudentService;
@@ -81,6 +82,21 @@ class EnrollmentTools {
                     attempt.""") @NotBlank @Size(max = 100) String idempotencyKey) {
         UUID studentId = CurrentUser.from(SecurityContextHolder.getContext().getAuthentication()).studentId();
         return enrollments.enroll(studentId, courseId, idempotencyKey);
+    }
+
+    @McpTool(name = "list_enrollments", description = """
+            List every enrollment in the platform, newest first, with the student's name and email and the course \
+            title. The filters are optional and combine with AND. ADMIN only.""",
+            annotations = @McpAnnotations(readOnlyHint = true))
+    @PreAuthorize("hasRole('ADMIN')")
+    public PageResponse<EnrollmentSummaryView> listEnrollments(
+            @McpToolParam(description = "Only enrollments in this course (UUID)", required = false) UUID courseId,
+            @McpToolParam(description = "Only enrollments of this student (UUID)", required = false) UUID studentId,
+            @McpToolParam(description = STATUS_FILTER_DESCRIPTION, required = false) EnrollmentStatus status,
+            @McpToolParam(description = McpPaging.PAGE_DESCRIPTION, required = false) Integer page,
+            @McpToolParam(description = McpPaging.SIZE_DESCRIPTION, required = false) Integer size) {
+        return PageResponse.from(enrollments.list(courseId, studentId, status,
+                McpPaging.page(page, size, Sort.by(Sort.Direction.DESC, "enrolledAt"))));
     }
 
     @McpTool(name = "get_enrollment", description = """

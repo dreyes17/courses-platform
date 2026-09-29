@@ -29,4 +29,14 @@ interface EnrollmentViewMapper {
     @Mapping(target = "courseId", source = "course.id")
     @Mapping(target = "courseTitle", source = "course.title")
     StudentEnrollmentView toStudentEnrollmentView(Enrollment enrollment);
+
+    /** Any enrollment, with both its student and its course. */
+    @Mapping(target = "enrollmentId", source = "id")
+    @Mapping(target = "studentId", source = "student.id")
+    @Mapping(target = "studentFirstName", source = "student.firstName")
+    @Mapping(target = "studentLastName", source = "student.lastName")
+    @Mapping(target = "studentEmail", source = "student.email")
+    @Mapping(target = "courseId", source = "course.id")
+    @Mapping(target = "courseTitle", source = "course.title")
+    EnrollmentSummaryView toSummaryView(Enrollment enrollment);
 }

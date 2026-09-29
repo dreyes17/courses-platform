@@ -2,6 +2,7 @@ package com.example.courses.enrollment.web;
 
 import com.example.courses.enrollment.application.CourseEnrollmentView;
 import com.example.courses.enrollment.application.EnrollmentService;
+import com.example.courses.enrollment.application.EnrollmentSummaryView;
 import com.example.courses.enrollment.application.EnrollmentView;
 import com.example.courses.enrollment.application.StudentEnrollmentView;
 import com.example.courses.enrollment.domain.EnrollmentStatus;
@@ -19,6 +20,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -73,6 +75,20 @@ class EnrollmentController {
         var location = ServletUriComponentsBuilder.fromCurrentContextPath()
                 .path("/api/enrollments/{id}").buildAndExpand(enrollment.id());
         return ResponseEntity.created(location.toUri()).body(enrollment);
+    }
+
+    @GetMapping("/api/enrollments")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "List every enrollment in the platform, newest first by default. ADMIN only",
+            description = "Optional filters, combinable: courseId, studentId, status. Each row carries the "
+                    + "student's name and email and the course title.")
+    PageResponse<EnrollmentSummaryView> list(
+            @RequestParam(required = false) UUID courseId,
+            @RequestParam(required = false) UUID studentId,
+            @RequestParam(required = false) EnrollmentStatus status,
+            @ParameterObject @PageableDefault(size = 20, sort = "enrolledAt", direction = Sort.Direction.DESC)
+            Pageable pageable) {
+        return PageResponse.from(enrollments.list(courseId, studentId, status, pageable));
     }
 
     @GetMapping("/api/enrollments/{id}")
