@@ -55,6 +55,9 @@ jobs:
       - name: Validate docker-compose.yml
         run: docker compose --env-file .env.example config --quiet
 
+      - name: Validate the Grafana dashboard JSON
+        run: python3 -m json.tool observability/grafana/dashboards/courses.json > /dev/null
+
       - name: Validate the Prometheus config and alert rules
         run: >-
           docker run --rm --entrypoint promtool

@@ -1,4 +1,5 @@
-# Runs the whole platform: PostgreSQL, RabbitMQ, Redis, the application and Prometheus.
+# Runs the whole platform: PostgreSQL, RabbitMQ, Redis, the application, and its observability stack (Prometheus,
+# Jaeger and Grafana).
 #   cp .env.example .env && docker compose up --build
 # Secrets come only from the environment / .env (git-ignored); missing ones stop compose with an error.
 name: courses
@@ -77,6 +78,9 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
       # One JSON object per log line (Elastic Common Schema), ready for a log collector.
       LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
+      # Every request traced and exported over OTLP to Jaeger (the application default samples 10%).
+      MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT: http://jaeger:4318/v1/traces
+      TRACING_SAMPLING_PROBABILITY: "1.0"
     ports:
       - "8080:8080"   # API only
     # Actuator (health, info, prometheus) on 8081: reachable by other containers in this network
@@ -103,7 +107,40 @@ services:
       # Loopback only: the UI shows every metric, which the app keeps off the public network on purpose.
       - "127.0.0.1:9090:9090"
 
+  # Receives the application's traces over OTLP (port 4318, internal only) and serves the trace UI. In-memory
+  # storage: traces are lost on restart, which is fine for evaluating the platform locally.
+  jaeger:
+    image: jaegertracing/jaeger:2.21.0
+    restart: unless-stopped
+    environment:
+      # Jaeger 2 listens on localhost by default; the application reaches it from another container.
+      JAEGER_LISTEN_HOST: 0.0.0.0
+    expose:
+      - "4318"
+    ports:
+      - "127.0.0.1:16686:16686"   # trace UI, loopback only
+
+  # Metrics dashboard over Prometheus (datasource and dashboard provisioned). Traces are browsed in Jaeger's UI.
+  grafana:
+    image: grafana/grafana:13.2.3
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
+      # Read-only access without logging in, to look at the dashboard; editing needs the admin account.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/courses.json
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"     # loopback only, like Prometheus
+
 volumes:
   postgres-data:
   rabbitmq-data:
   prometheus-data:
+  grafana-data:

@@ -28,12 +28,15 @@
     "ghcr.io/anthropics/devcontainer-features/claude-code:1": {}
   },
 
-  "forwardPorts": [8080, "rabbitmq:15672", "postgres:5432", 6274],
+  "forwardPorts": [8080, "rabbitmq:15672", "postgres:5432", 6274, 9090, 3000, 16686],
   "portsAttributes": {
     "8080": { "label": "Spring Boot app (Swagger UI: /swagger-ui.html)" },
     "rabbitmq:15672": { "label": "RabbitMQ management UI" },
     "postgres:5432": { "label": "PostgreSQL", "onAutoForward": "silent" },
-    "6274": { "label": "MCP Inspector" }
+    "6274": { "label": "MCP Inspector" },
+    "9090": { "label": "Prometheus (docker compose stack)", "onAutoForward": "silent" },
+    "3000": { "label": "Grafana (docker compose stack)", "onAutoForward": "silent" },
+    "16686": { "label": "Jaeger UI (docker compose stack)", "onAutoForward": "silent" }
   },
 
   "postCreateCommand": "bash .devcontainer/post-create.sh",

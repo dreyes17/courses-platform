@@ -43,11 +43,15 @@ public class OutboxEvent extends BaseEntity {
     @Column(name = "correlation_id", length = 100)
     private String correlationId;
 
+    /** W3C traceparent of the span that recorded the event, so the relay can continue its trace. */
+    @Column(name = "trace_parent", length = 55)
+    private String traceParent;
+
     protected OutboxEvent() {
     }
 
     private OutboxEvent(String aggregateType, UUID aggregateId, String eventType, String payload,
-                        String correlationId) {
+                        String correlationId, String traceParent) {
         this.aggregateType = Objects.requireNonNull(aggregateType, "aggregateType");
         this.aggregateId = Objects.requireNonNull(aggregateId, "aggregateId");
         this.eventType = Objects.requireNonNull(eventType, "eventType");
@@ -55,11 +59,12 @@ public class OutboxEvent extends BaseEntity {
         this.status = OutboxStatus.PENDING;
         this.createdAt = Instant.now();
         this.correlationId = correlationId;
+        this.traceParent = traceParent;
     }
 
     public static OutboxEvent record(String aggregateType, UUID aggregateId, String eventType, String payloadJson,
-                                     String correlationId) {
-        return new OutboxEvent(aggregateType, aggregateId, eventType, payloadJson, correlationId);
+                                     String correlationId, String traceParent) {
+        return new OutboxEvent(aggregateType, aggregateId, eventType, payloadJson, correlationId, traceParent);
     }
 
     public void markPublished() {
@@ -104,5 +109,9 @@ public class OutboxEvent extends BaseEntity {
 
     public String getCorrelationId() {
         return correlationId;
+    }
+
+    public String getTraceParent() {
+        return traceParent;
     }
 }

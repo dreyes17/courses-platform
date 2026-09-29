@@ -3,6 +3,7 @@ package com.example.courses.messaging.outbox;
 import com.example.courses.messaging.config.RabbitTopology;
 import com.example.courses.messaging.events.EventType;
 import com.example.courses.shared.observability.CorrelationId;
+import com.example.courses.shared.observability.TracePropagation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.Message;
@@ -37,9 +38,10 @@ public class OutboxRelay {
     private final TransactionTemplate transactionTemplate;
     private final int batchSize;
     private final Duration confirmTimeout;
+    private final TracePropagation tracePropagation;
 
     public OutboxRelay(OutboxEventRepository outboxEvents, RabbitTemplate rabbitTemplate,
-                       TransactionTemplate transactionTemplate,
+                       TransactionTemplate transactionTemplate, TracePropagation tracePropagation,
                        @Value("${app.outbox.batch-size:100}") int batchSize,
                        @Value("${app.outbox.confirm-timeout:5s}") Duration confirmTimeout) {
         this.outboxEvents = outboxEvents;
@@ -47,13 +49,18 @@ public class OutboxRelay {
         this.transactionTemplate = transactionTemplate;
         this.batchSize = batchSize;
         this.confirmTimeout = confirmTimeout;
+        this.tracePropagation = tracePropagation;
     }
 
     @Scheduled(fixedDelayString = "${app.outbox.poll-interval:500ms}")
     public void publishPending() {
         transactionTemplate.executeWithoutResult(status -> {
             for (OutboxEvent event : outboxEvents.lockNextPending(batchSize)) {
-                if (!CorrelationId.callWith(event.getCorrelationId(), () -> publish(event))) {
+                // Publishes inside the trace and correlation id of the request that recorded the event.
+                boolean published = CorrelationId.callWith(event.getCorrelationId(), () -> tracePropagation
+                        .continueTrace(event.getTraceParent(), "outbox publish " + event.getEventType(),
+                                () -> publish(event)));
+                if (!published) {
                     return;
                 }
             }

@@ -49,6 +49,30 @@ class ObservabilityTest extends ApiTestSupport {
     }
 
     @Test
+    void theTraceContinuesFromTheRequestThroughRabbitMqIntoTheConsumers() {
+        String courseId = createPublishedCourse(createInstructor(), 5, BigDecimal.TEN);
+        String traceId = UUID.randomUUID().toString().replace("-", "");
+        String traceParent = "00-" + traceId + "-" + traceId.substring(0, 16) + "-01";
+
+        var result = mvc.post().uri("/api/enrollments")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + registerStudent().token())
+                .header("Idempotency-Key", UUID.randomUUID().toString())
+                .header("traceparent", traceParent)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"courseId": "%s"}""".formatted(courseId))
+                .exchange();
+
+        assertThat(result).hasStatus(HttpStatus.CREATED);
+        // PaymentConfirmed is recorded by the payment consumer, after the relay published EnrollmentCreated in a
+        // span continuing the request's trace and RabbitMQ carried it in the message headers. Finding the
+        // request's trace id on it proves the trace crossed the outbox, the broker and the consumer.
+        await().atMost(ASYNC_TIMEOUT).untilAsserted(() -> assertThat(jdbcTemplate.queryForList(
+                "select event_type from outbox_events where trace_parent like ?", String.class,
+                "00-" + traceId + "-%")).contains("EnrollmentCreated", "PaymentConfirmed"));
+    }
+
+    @Test
     void unsafeCorrelationIdIsReplacedWithAGeneratedOne() {
         var result = mvc.get().uri("/api/categories")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken())

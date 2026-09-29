@@ -48,6 +48,7 @@ Everything works without a `.env` file. Every variable has a development default
 | `15672` | RabbitMQ management UI (`courses` / `courses`) |
 | `5432` | PostgreSQL, for a desktop client |
 | `6274` | MCP Inspector (see below) |
+| `9090`, `3000`, `16686` | Prometheus, Grafana and Jaeger, when the app's own `docker compose up` runs inside the container |
 
 **Persistent volumes:** Maven cache (`~/.m2`), Claude Code config (`~/.claude`), Postgres data, RabbitMQ data
 and the internal Docker images. Rebuilding the container keeps them.

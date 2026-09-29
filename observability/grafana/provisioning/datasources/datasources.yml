@@ -1,0 +1,10 @@
+# Provisioned at startup, so the dashboard works without any manual setup. Traces are browsed in Jaeger's own UI
+# (http://localhost:16686): Jaeger 2 only serves its v3 query API, which Grafana's Jaeger datasource doesn't use.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true

@@ -10,6 +10,7 @@ import com.example.courses.catalog.repository.InstructorRepository;
 import com.example.courses.enrollment.domain.Student;
 import com.example.courses.enrollment.repository.StudentRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.micrometer.tracing.test.autoconfigure.AutoConfigureTracing;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
@@ -28,10 +29,12 @@ import java.util.UUID;
         "app.jwt.secret=test-only-secret-at-least-32-bytes-long!",
         // The suite logs in hundreds of times from one address; RateLimitingTest enables it on its own.
         "app.rate-limit.enabled=false",
+        "management.tracing.sampling.probability=1.0",
         "app.security.admin.email=" + AbstractIntegrationTest.ADMIN_EMAIL,
         "app.security.admin.password=" + AbstractIntegrationTest.ADMIN_PASSWORD
 })
 @AutoConfigureMockMvc
+@AutoConfigureTracing
 @Import(TestcontainersConfiguration.class)
 public abstract class AbstractIntegrationTest {
 

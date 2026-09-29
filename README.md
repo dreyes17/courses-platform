@@ -7,8 +7,8 @@ limitado, pagos con confirmación asíncrona y emisión de certificados por even
 RabbitMQ.
 
 Stack: Java 21 (virtual threads) · Spring Boot 4.1 · PostgreSQL · Flyway · Spring AMQP · Spring Security (JWT) ·
-Caffeine · MapStruct · Bucket4j + Redis · Spring AI (servidor MCP) · Testcontainers · Prometheus ·
-GitHub Actions.
+Caffeine · MapStruct · Bucket4j + Redis · Spring AI (servidor MCP) · Testcontainers · OpenTelemetry ·
+Prometheus · Jaeger · Grafana · GitHub Actions.
 
 ## Arrancar el proyecto
 
@@ -16,7 +16,7 @@ GitHub Actions.
 
 ```bash
 cp .env.example .env          # secretos de evaluación local; .env está fuera de git
-docker compose up --build     # PostgreSQL + RabbitMQ + Redis + aplicación + Prometheus
+docker compose up --build     # PostgreSQL + RabbitMQ + Redis + aplicación + Prometheus, Jaeger y Grafana
 ```
 
 - La aplicación queda en <http://localhost:8080>. La documentación interactiva está en
@@ -25,6 +25,9 @@ docker compose up --build     # PostgreSQL + RabbitMQ + Redis + aplicación + Pr
   las colas y las DLQ.
 - Prometheus está en <http://localhost:9090>, solo accesible desde tu máquina. Recoge las métricas de la
   aplicación y evalúa las alertas (ver [Prometheus y alertas](#prometheus-y-alertas)).
+- Grafana está en <http://localhost:3000> con el dashboard de la plataforma ya cargado, y Jaeger en
+  <http://localhost:16686> con las trazas de cada petición. Los dos solo son accesibles desde tu máquina (ver
+  [Trazas distribuidas](#trazas-distribuidas-opentelemetry--jaeger) y [Dashboard](#dashboard-grafana)).
 - El servidor MCP está en `http://localhost:8080/mcp` (ver [Integración MCP](#integración-mcp)).
 - Hay una cuenta ADMIN creada con `ADMIN_EMAIL`/`ADMIN_PASSWORD`. Ver [Seguridad](#seguridad) para obtener un
   token.
@@ -37,8 +40,9 @@ docker compose up --build     # PostgreSQL + RabbitMQ + Redis + aplicación + Pr
 > IDE aplican esa configuración automáticamente. Si `http://localhost:8080` no responde, reenvía el puerto
 > `8080` del contenedor con el mecanismo de tu IDE y usa la dirección local que te asigne, que puede no ser el
 > 8080 si ese puerto ya está ocupado en tu máquina. Para la interfaz de RabbitMQ de este stack, haz lo mismo
-> con el `15672`, y para Prometheus con el `9090`. Ojo: el `15672` de tu máquina puede estar apuntando ya a
-> la RabbitMQ del propio devcontainer, que es otra instancia con otras credenciales.
+> con el `15672`, y para Prometheus, Grafana y Jaeger con el `9090`, el `3000` y el `16686`. Ojo: el `15672`
+> de tu máquina puede estar apuntando ya a la RabbitMQ del propio devcontainer, que es otra instancia con otras
+> credenciales.
 >
 > Si ejecutas `docker compose` directamente en tu máquina, fuera del devcontainer, no hace falta nada de esto.
 
@@ -48,9 +52,9 @@ Cómo se comporta el despliegue:
   detiene y dice cuál.
 - **Orden de arranque:** la aplicación espera a que Postgres y RabbitMQ pasen su healthcheck. Su propio
   healthcheck consulta `/actuator/health/readiness` en el puerto de gestión (ver [Actuator](#actuator-y-puerto-de-gestión)).
-- **Puertos:** se publican el 8080 (la API y el servidor MCP), el 15672 (interfaz de RabbitMQ) y el 9090
-  (Prometheus, solo en `127.0.0.1`). Actuator escucha en el 8081, que solo es accesible dentro de la red de
-  Docker.
+- **Puertos:** se publican el 8080 (la API y el servidor MCP) y el 15672 (interfaz de RabbitMQ), y solo en
+  `127.0.0.1` el 9090 (Prometheus), el 3000 (Grafana) y el 16686 (Jaeger). Actuator escucha en el 8081,
+  que solo es accesible dentro de la red de Docker.
 - **Arranque de la aplicación:** Flyway crea el esquema y la topología de RabbitMQ se declara sola, sin
   pasos manuales.
 - **Imagen:** el `Dockerfile` compila con el wrapper `mvnw` en una etapa JDK y ejecuta en una etapa JRE, con
@@ -413,7 +417,7 @@ silencio:
   operaciones se rechazan al momento en lugar de encolarse, y la reconexión se reintenta como mucho cada 5
   segundos. Una caída de Redis no añade latencia apreciable.
 - Cada petición que pasa sin comprobar suma en `courses_rate_limit_unavailable_total`. La alerta
-  `RateLimitingUnavailable` salta en cuanto aparece.
+  `RateLimitingUnavailable` salta en cuanto aparece, y el panel de rate limiting de Grafana la muestra.
 - Redis aparece en `/actuator/health`, pero no en la sonda de *readiness*: una instancia sin Redis sigue
   pudiendo servir tráfico.
 - La aplicación arranca aunque Redis no esté: la conexión se abre en el primer uso.
@@ -518,8 +522,7 @@ estas métricas de negocio y operación:
   métricas de negocio y de caché, y las cuatro reglas cargan sin errores. Tras dejar un mensaje en
   `certificates.enrollment-completed.dlq`, `MessagesInDeadLetterQueue` pasó a `firing` al cumplirse el minuto.
 - **El CI valida la configuración y las reglas** con `promtool` (ver [Integración continua](#integración-continua)).
-- Quedan fuera un Alertmanager (a quién avisar y cómo) y los dashboards de Grafana, que corresponden al
-  bonus de trazas y dashboards.
+- Queda fuera un Alertmanager, que decidiría a quién avisar y cómo.
 
 ### Logs con correlación
 
@@ -541,19 +544,77 @@ Un id que llega del cliente solo se acepta si tiene un formato seguro (`[A-Za-z0
 se sustituye por uno generado. Así nadie puede inyectar saltos de línea ni texto arbitrario en los logs.
 
 **Formato.** En Compose, los logs salen en **JSON** (formato ECS, `LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs`),
-una línea por evento y con `correlationId` como campo, listos para un recolector de logs. En desarrollo
-local son texto plano, con el id entre corchetes. Por ejemplo:
+una línea por evento y con `correlationId`, `traceId` y `spanId` como campos, listos para un recolector de
+logs. En desarrollo local son texto plano, con esos ids entre corchetes. Por ejemplo:
 
 ```json
 {"@timestamp":"…","log":{"level":"INFO","logger":"…PaymentProcessor"},"process":{"thread":{"name":"rabbit-simple-3"}},"correlationId":"demo-23643","message":"Payment … confirmed (transaction …)", …}
 ```
 
-**Por qué un correlation-id y no trazas distribuidas.** El enunciado admite cualquiera de las dos. La
-propagación automática de trazas no funcionaría bien aquí: el mensaje no se envía en la petición HTTP, sino
-más tarde y desde otro hilo (el relay del outbox), con lo que la traza se rompería justo en el salto a
-RabbitMQ. El correlation-id viaja guardado en el outbox y no depende de eso. Añadir OpenTelemetry (bonus)
-sería complementario: habría que guardar también el contexto de traza en el outbox, igual que se hace con
-el id.
+**El correlation-id se mantiene junto a las trazas** (ver abajo): no depende del muestreo, así que está en
+todos los logs y eventos, y es lo que el cliente ve en `X-Correlation-Id`.
+
+### Trazas distribuidas (OpenTelemetry + Jaeger)
+
+Micrometer Tracing con el puente de OpenTelemetry. En Compose, cada petición se traza y se exporta por OTLP a
+Jaeger (<http://localhost:16686>, solo desde tu máquina). Una inscripción aparece como **una sola traza**,
+desde la petición HTTP hasta el último consumidor:
+
+```
+POST /api/enrollments                                  petición HTTP (con seguridad y @PreAuthorize)
+└─ outbox publish EnrollmentCreated                    relay del outbox, continuando la traza de la petición
+   └─ courses.events/enrollment.created send
+      └─ payments.enrollment-created receive           consumidor de pagos
+         └─ outbox publish PaymentConfirmed
+            └─ courses.events/payment.confirmed send
+               └─ enrollments.payment-confirmed receive  activación de la inscripción
+```
+
+**El problema que había que resolver** es el mismo que con el correlation-id. La propagación automática no
+cruza el outbox: el evento se publica más tarde y desde el hilo del relay, cuando la petición ya terminó, así
+que la traza se cortaría justo antes de RabbitMQ. Se resuelve igual que el correlation-id:
+
+1. `OutboxRecorder` guarda junto al evento el `traceparent` W3C del span actual
+   (`V5__outbox_trace_parent.sql`).
+2. `OutboxRelay` publica cada evento dentro de un span que continúa esa traza (`TracePropagation`).
+3. Con la observación de Spring AMQP activada, `RabbitTemplate` envía el contexto en las cabeceras del
+   mensaje y cada listener lo continúa. Los eventos que emite un consumidor guardan a su vez su
+   `traceparent`, y la cadena sigue.
+
+**Comprobado.** En el stack de Compose, la traza de una inscripción reúne los 13 spans: la petición y su
+seguridad, dos publicaciones del relay, dos envíos y dos consumos. `ObservabilityTest` lo comprueba sin
+Jaeger: envía una inscripción con un `traceparent` conocido y verifica que el `PaymentConfirmed`, que registra
+el consumidor de pagos, lleva el mismo trace id. Sin la continuación en el relay, el test falla.
+
+- **Muestreo:** 10 % por defecto (`TRACING_SAMPLING_PROBABILITY`), para que en producción cueste poco.
+  Compose lo sube al 100 %.
+- **Exportación:** solo si se define `MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT`, como hace Compose.
+  En desarrollo local y en los tests no se exporta nada.
+- **Logs:** cada línea lleva `traceId` y `spanId` además del `correlationId`, así que desde un log se llega a
+  su traza.
+
+### Dashboard (Grafana)
+
+Grafana (<http://localhost:3000>, solo desde tu máquina) arranca con Prometheus como fuente de datos y con el
+dashboard **Courses — plataforma** ya provisionado desde `observability/grafana/` como página de inicio. Se
+puede ver sin iniciar sesión; para editarlo hace falta la cuenta `admin` con `GRAFANA_ADMIN_PASSWORD`.
+
+| Fila | Paneles |
+|---|---|
+| Estado | instancias arriba, mensajes en DLQ, eventos del outbox `FAILED` y pendientes; cambian de color cuando requieren atención |
+| Tráfico HTTP | peticiones por segundo por código de respuesta, latencia p95 por endpoint, rechazos por rate limiting |
+| Negocio | inscripciones por resultado, pagos confirmados y fallidos, certificados emitidos |
+| Mensajería, outbox y caché | mensajes en cada DLQ, eventos del outbox por estado, tasa de aciertos de cada caché |
+| Recursos | conexiones de Hikari (activas, esperando, máximo), hilos de la JVM, memoria heap |
+
+- El p95 se calcula con los histogramas de latencia que exporta la aplicación (`percentiles-histogram` para
+  `http.server.requests`), así que es correcto también al agregar varias instancias.
+- El panel de Hikari cierra el razonamiento de los virtual threads: con ellos, el límite real es el pool de
+  conexiones, y un valor sostenido en "esperando" indica saturación.
+- Comprobado con el stack de Compose: tras generar tráfico, todas las consultas del dashboard devuelven
+  datos.
+- Las trazas se consultan en la interfaz de Jaeger, enlazada desde el dashboard. No están integradas en
+  Grafana porque Jaeger 2 solo sirve su API de consulta v3, que el datasource de Jaeger de Grafana 13 no usa.
 
 ## Flujo de inscripción
 
@@ -929,7 +990,7 @@ invalidaciones no cambian.
 
 ## Tests
 
-`./mvnw test` ejecuta los 123 tests en unos 45 segundos. Casi todos los de integración comparten un único
+`./mvnw test` ejecuta los 124 tests en unos 45 segundos. Casi todos los de integración comparten un único
 contexto de Spring y un único par de contenedores (`AbstractIntegrationTest`), por eso la suite es rápida pese
 a usar PostgreSQL y RabbitMQ reales. Hay otros dos contextos:
 
@@ -947,14 +1008,14 @@ a usar PostgreSQL y RabbitMQ reales. Hay otros dos contextos:
 | **HTTP** (MockMvc) | Flujo end-to-end por la API con cada rol, mapeo de errores a `problem+json`, 401/403 y reglas de propiedad, ausencia de N+1 | `EnrollmentApiTest`, `ErrorHandlingApiTest`, `SecurityApiTest`, `QueryEfficiencyTest` |
 | **Puertos reales** | Actuator accesible sin credenciales solo en el puerto de gestión, health y readiness con BD y broker, API protegida y ausente en ese puerto | `ManagementPortTest` |
 | **Virtual threads** | Peticiones HTTP, consumidores RabbitMQ y tareas programadas se ejecutan en virtual threads | `VirtualThreadsTest` |
-| **Observabilidad** | `correlationId` propagado de la petición HTTP al consumidor a través de RabbitMQ, ids no seguros sustituidos, contadores por resultado, *gauges* de DLQ y de outbox `FAILED` | `ObservabilityTest` |
+| **Observabilidad** | `correlationId` y traza de OpenTelemetry propagados de la petición HTTP al consumidor a través del outbox y RabbitMQ, ids no seguros sustituidos, contadores por resultado, *gauges* de DLQ y de outbox `FAILED` | `ObservabilityTest` |
 | **Caché** | Lecturas servidas desde la caché, invalidación en cada escritura (plazas incluidas), permisos aplicados también en los aciertos, métricas | `CatalogCacheTest` |
 | **Paginación por cursor** | Recorrido completo sin repetir ni saltar cursos, curso creado a mitad del recorrido, solo `PUBLISHED` para estudiantes, cursor inválido, tamaño máximo | `CursorPaginationTest` |
 | **Rate limiting** | Login limitado por IP (429 con `Retry-After`, métrica, otra IP sin afectar), inscripción y MCP limitados por usuario y no por IP, cupo restante; con Redis real: dos instancias comparten un cupo, un Redis inaccesible falla rápido y el filtro deja pasar y cuenta la petición | `RateLimitingTest`, `RedisRateLimitingTest` |
 | **MCP** | Las 17 tools con descripción y parámetros; flujo completo de inscripción a través de tools con reintento idempotente y activación asíncrona; mismos permisos que la API; validación; errores sin detalles internos; 401 sin token | `McpServerTest`, `McpToolErrorsTest` |
 | **Contrato** | Campos del JSON de los eventos publicados | `EventContractTest` |
 
-Para comprobar que los tests no pasan por casualidad, quité a propósito siete protecciones y confirmé que los
+Para comprobar que los tests no pasan por casualidad, quité a propósito ocho protecciones y confirmé que los
 tests fallaban:
 
 - sin el `@EntityGraph`, `QueryEfficiencyTest` detecta el N+1;
@@ -967,7 +1028,9 @@ tests fallaban:
   mostrando 2 plazas libres después de una inscripción;
 - sin registrar el filtro de rate limiting, fallan los tests de `RateLimitingTest`;
 - sin el `@PreAuthorize` de `create_category`, `McpServerTest` detecta que un estudiante puede crear
-  categorías.
+  categorías;
+- sin la continuación de la traza en el relay del outbox, `ObservabilityTest` detecta que el
+  `PaymentConfirmed` acaba en otra traza.
 
 ## Integración continua
 
@@ -976,8 +1039,8 @@ paralelo:
 
 | Job | Qué hace |
 |---|---|
-| Build and test | `./mvnw -B verify` con Java 21 (Temurin): compila y ejecuta los 123 tests. Los de integración usan el Docker que ya traen los runners `ubuntu-latest`, así que Testcontainers funciona sin configuración. Si algo falla, sube los informes de Surefire como artefacto. |
-| Docker image and deployment config | Construye la imagen del `Dockerfile`, valida `docker-compose.yml` con `.env.example` y valida la configuración y las alertas de Prometheus con `promtool`. |
+| Build and test | `./mvnw -B verify` con Java 21 (Temurin): compila y ejecuta los 124 tests. Los de integración usan el Docker que ya traen los runners `ubuntu-latest`, así que Testcontainers funciona sin configuración. Si algo falla, sube los informes de Surefire como artefacto. |
+| Docker image and deployment config | Construye la imagen del `Dockerfile`, valida `docker-compose.yml` con `.env.example`, valida el JSON del dashboard de Grafana y valida la configuración y las alertas de Prometheus con `promtool`. |
 
 - Reutiliza las dependencias de Maven entre ejecuciones (caché de `setup-java`), tiene permisos de solo
   lectura y cancela la ejecución anterior de la misma rama cuando llega un push nuevo.
@@ -1019,3 +1082,6 @@ paralelo:
       BD/RabbitMQ y logs JSON con `correlationId` propagado a través de RabbitMQ
 - [x] Bonus: virtual threads (medido: sin *pinning*), Prometheus con alertas en Compose, CI con GitHub
       Actions, caché del catálogo con Caffeine y mapeo entidad → vista con MapStruct
+- [x] Bonus: rate limiting (Bucket4j sobre Redis, compartido entre instancias), paginación por cursor,
+      servidor MCP con Spring AI conectado a los casos de uso reales, y trazas de OpenTelemetry a través del
+      outbox y RabbitMQ con Jaeger y dashboard de Grafana

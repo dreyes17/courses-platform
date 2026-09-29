@@ -63,8 +63,12 @@ spring:
     publisher-returns: true
     template:
       mandatory: true
+      # Producer spans, and the trace context propagated to consumers in the AMQP headers.
+      observation-enabled: true
     listener:
       simple:
+        # Each consumer continues the trace of the message it processes.
+        observation-enabled: true
         acknowledge-mode: auto
         # After the last retry the message is rejected without requeue, so the broker dead-letters it.
         default-requeue-rejected: false
@@ -125,6 +129,17 @@ management:
     web:
       exposure:
         include: health,info,prometheus
+  tracing:
+    sampling:
+      # 10% by default so tracing costs little in production; docker-compose.yml sets 1.0 to trace every request.
+      probability: ${TRACING_SAMPLING_PROBABILITY:0.1}
+  # Traces are exported over OTLP only when management.opentelemetry.tracing.export.otlp.endpoint is set
+  # (docker-compose.yml points it at Jaeger); without it nothing is exported.
+  metrics:
+    distribution:
+      # Latency buckets, so Grafana can compute percentiles (p95) across instances.
+      percentiles-histogram:
+        http.server.requests: true
   endpoint:
     health:
       probes:
@@ -140,7 +155,7 @@ management:
           include: readinessState,db,rabbit
 
 logging:
-  # Plain-text logs show the correlation id of the flow; JSON logs (logging.structured.format.console=ecs,
-  # enabled in docker-compose.yml) include it as a field automatically.
+  # Plain-text logs show the trace id, span id and correlation id of the flow; JSON logs
+  # (logging.structured.format.console=ecs, enabled in docker-compose.yml) include them as fields automatically.
   pattern:
-    correlation: "[%X{correlationId:-}] "
+    correlation: "[%X{traceId:-},%X{spanId:-}] [%X{correlationId:-}] "
