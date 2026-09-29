@@ -30,7 +30,7 @@ docker compose up --build     # PostgreSQL + RabbitMQ + Redis + aplicación + Pr
   [Trazas distribuidas](#trazas-distribuidas-opentelemetry--jaeger) y [Dashboard](#dashboard-grafana)).
 - El servidor MCP está en `http://localhost:8080/mcp` (ver [Integración MCP](#integración-mcp)).
 - Hay una cuenta ADMIN creada con `ADMIN_EMAIL`/`ADMIN_PASSWORD`. Ver [Seguridad](#seguridad) para obtener un
-  token.
+  token (dentro del devcontainer, lee antes la nota siguiente).
 - `docker compose down -v` lo para todo y borra los volúmenes de datos.
 
 > **Si lanzas `docker compose` desde dentro del devcontainer:** ese entorno usa su propio Docker
@@ -43,6 +43,14 @@ docker compose up --build     # PostgreSQL + RabbitMQ + Redis + aplicación + Pr
 > con el `15672`, y para Prometheus, Grafana y Jaeger con el `9090`, el `3000` y el `16686`. Ojo: el `15672`
 > de tu máquina puede estar apuntando ya a la RabbitMQ del propio devcontainer, que es otra instancia con otras
 > credenciales.
+>
+> **Las variables del devcontainer mandan sobre `.env`.** Docker Compose da prioridad a las variables del
+> shell sobre las de `.env`, y el devcontainer ya exporta `JWT_SECRET`, `ADMIN_EMAIL` y `ADMIN_PASSWORD` con
+> sus valores de desarrollo (ver [`.devcontainer/README.md`](.devcontainer/README.md)). Así que, lanzado
+> desde dentro del devcontainer, el ADMIN del stack de Compose usa la contraseña del devcontainer, no la de tu
+> `.env`. Los ejemplos de este README toman `$ADMIN_EMAIL`/`$ADMIN_PASSWORD` del shell, así que dentro del
+> devcontainer funcionan tal cual. Si prefieres los valores de `.env`, arranca con
+> `env -u JWT_SECRET -u ADMIN_EMAIL -u ADMIN_PASSWORD docker compose up --build`.
 >
 > Si ejecutas `docker compose` directamente en tu máquina, fuera del devcontainer, no hace falta nada de esto.
 
@@ -246,27 +254,46 @@ replica en la propia BD las invariantes críticas: `courses` tiene `CHECK (seats
 
 ## API REST
 
-Todos los endpoints cuelgan de `/api` y están documentados en Swagger UI con sus parámetros y códigos de
-respuesta.
+Todos los endpoints cuelgan de `/api` y están documentados en Swagger UI (<http://localhost:8080/swagger-ui.html>)
+y en la especificación OpenAPI (`/v3/api-docs`).
 
-| Recurso | Operaciones |
+| Recurso | Operaciones | Filtros del listado |
+|---|---|---|
+| `/api/categories` | crear, listar, obtener, renombrar (`PUT`), `POST /{id}/archive`, `POST /{id}/activate`, borrar (409 si tiene cursos) | `name`, `status` |
+| `/api/auth` | `POST /register` (alta pública de estudiante), `POST /token` (login → JWT) | — |
+| `/api/instructors` | crear instructor y su cuenta (email único), listar, obtener, actualizar perfil, borrar (409 si tiene cursos) | `name`, `email` |
+| `/api/courses` | crear (en `DRAFT`), buscar, buscar con cursor (`GET /scroll`), obtener, actualizar, `POST /{id}/publish`, `POST /{id}/archive`, borrar (solo `DRAFT`) | ver *Búsqueda de cursos*, abajo |
+| `/api/students` | listar, obtener | `name` (nombre o apellido), `email` |
+| `/api/enrollments` | inscribir (`Idempotency-Key` obligatoria; el estudiante sale del token), obtener, `PUT /{id}/progress`, `POST /{id}/cancel` | — |
+| `/api/courses/{id}/enrollments` | estudiantes inscritos en un curso | `status` |
+| `/api/students/{id}/enrollments` | cursos de un estudiante | `status` |
+
+**La especificación basta para integrarse.** Cada operación documenta su código de éxito real (`201` en las
+altas, `204` en los borrados) y todos sus errores, con el cuerpo `application/problem+json` (esquema
+`ProblemDetail`). Los errores que se deducen de la propia operación los añade `OpenApiConfig` a todas:
+
+| Error | Cuándo se documenta |
 |---|---|
-| `/api/categories` | crear, listar, obtener, renombrar (`PUT`), `POST /{id}/archive`, `POST /{id}/activate`, borrar (409 si tiene cursos) |
-| `/api/auth` | `POST /register` (alta pública de estudiante), `POST /token` (login → JWT) |
-| `/api/instructors` | crear instructor y su cuenta (email único), listar, obtener, actualizar perfil, borrar (409 si tiene cursos) |
-| `/api/courses` | crear (en `DRAFT`), buscar, buscar con cursor (`GET /scroll`), obtener, actualizar, `POST /{id}/publish`, `POST /{id}/archive`, borrar (solo `DRAFT`) |
-| `/api/students` | listar, obtener |
-| `/api/enrollments` | inscribir (`Idempotency-Key` obligatoria; el estudiante sale del token), obtener, `PUT /{id}/progress`, `POST /{id}/cancel` |
-| `/api/courses/{id}/enrollments` | estudiantes inscritos en un curso |
-| `/api/students/{id}/enrollments` | cursos de un estudiante |
+| 400 | la operación recibe cuerpo o parámetros |
+| 401 | necesita token (todas salvo login y registro) |
+| 403 | tiene una regla de rol o de propiedad (`@PreAuthorize`) |
+| 404 | direcciona un recurso por id en la ruta |
+
+Los que dependen de reglas de negocio (409, 422, 429, y el 404 de un id que llega en el cuerpo) se declaran
+en cada endpoint con `@ApiResponse` y una descripción del caso concreto: por ejemplo, `POST /api/enrollments`
+documenta 409 para *curso lleno, no publicado o estudiante ya inscrito* y 422 para *`Idempotency-Key` reutilizada
+con otra petición*. `ApiDocumentationTest` comprueba que cada operación tiene exactamente una respuesta de
+éxito con su cuerpo, y que todos los errores usan el esquema `ProblemDetail`.
 
 - **Transiciones de estado como acciones.** Publicar, archivar y cancelar son `POST` sobre un subrecurso, no
   un `PUT` que cambie el campo `status`. Así la regla de negocio de cada transición vive en un único método
   del dominio.
-- **Paginación en todos los listados.** Aceptan `page`, `size` (por defecto 20, máximo 100) y `sort`
-  (propiedades de la entidad, p. ej. `sort=price,desc`). Responden con
-  `{content, page, size, totalElements, totalPages}`. Ningún endpoint devuelve una tabla entera. La búsqueda
-  de cursos ofrece además paginación por cursor (ver [Paginación por cursor](#paginación-por-cursor)).
+- **Paginación, ordenación y filtrado en todos los listados.** Aceptan `page`, `size` (por defecto 20, máximo
+  100) y `sort` (propiedades de la entidad, p. ej. `sort=price,desc`), además de los filtros de la tabla
+  anterior. Los filtros son opcionales y se combinan entre sí; los de texto buscan una subcadena sin distinguir
+  mayúsculas. Responden con `{content, page, size, totalElements, totalPages}`. Ningún endpoint devuelve una
+  tabla entera. La búsqueda de cursos ofrece además paginación por cursor (ver
+  [Paginación por cursor](#paginación-por-cursor)).
 - **Rate limiting** en login, registro, inscripción y MCP: 429 con `Retry-After` (ver
   [Rate limiting](#rate-limiting)).
 - **Búsqueda de cursos.** Todos los filtros son opcionales y combinables: `categoryId`, `level`, `minPrice`,
@@ -321,7 +348,7 @@ inesperada se registra en el servidor y se devuelve como un 500 genérico.
 | Situación | Excepción | HTTP |
 |---|---|---|
 | Cuerpo inválido (Bean Validation) | `MethodArgumentNotValidException` → incluye `errors` por campo | 400 |
-| Cabecera obligatoria ausente, `sort` sobre una propiedad inexistente | `MissingRequestHeaderException`, `PropertyReferenceException` | 400 |
+| Cabecera obligatoria ausente, `sort` sobre una propiedad inexistente, filtro o id con un valor inválido | `MissingRequestHeaderException`, `PropertyReferenceException`, `MethodArgumentTypeMismatchException` | 400 |
 | Recurso inexistente | `ResourceNotFoundException` | 404 |
 | Curso lleno, doble inscripción, transición de estado inválida, duplicado, recurso en uso | subclases de `ConflictException` | 409 |
 | Modificación concurrente, violación de restricción en BD | `OptimisticLockingFailureException`, `DataIntegrityViolationException` | 409 |
@@ -345,8 +372,9 @@ Autenticación con **JWT bearer** emitido por la propia aplicación, sin proveed
    caducidad y emisor `courses-api`.
 
 ```bash
+set -a; . ./.env; set +a    # fuera del devcontainer; dentro, las variables ya están definidas
 TOKEN=$(curl -s localhost:8080/api/auth/token -H 'Content-Type: application/json' \
-  -d '{"email":"admin@courses.local","password":"dev-only-admin-password"}' | jq -r .accessToken)
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" | jq -r .accessToken)
 curl localhost:8080/api/students -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -359,7 +387,7 @@ ligeras:
 |---|---|
 | ADMIN | Todo: gestionar catálogo e instructores, ver cualquier estudiante, inscripción o listado |
 | INSTRUCTOR | Crear cursos a su nombre; editar, publicar, archivar y borrar **sus** cursos; ver las inscripciones de **sus** cursos |
-| STUDENT | Ver el catálogo (solo cursos `PUBLISHED`); inscribirse; ver, actualizar progreso y cancelar **sus** inscripciones |
+| STUDENT | Ver el catálogo (solo cursos `PUBLISHED`); inscribirse, lo que inicia el pago (ver [Flujo de inscripción](#flujo-de-inscripción)); ver, actualizar progreso y cancelar **sus** inscripciones |
 
 - Al inscribirse, el estudiante se toma del token y el cuerpo solo lleva `courseId`. Así no es posible
   inscribir a otra persona.
@@ -468,6 +496,9 @@ procesos que están sanos, y eso no arreglaría nada.
   aleatorio, y aunque alguien configurase el mismo puerto para API y gestión, esta cadena nunca podría abrir
   la API.
 
+**`/actuator/info`** describe qué se está ejecutando: nombre, versión y fecha de compilación (el goal
+`build-info` del `spring-boot-maven-plugin`) y la versión de Java.
+
 En Compose, el servicio `prometheus` lee `http://app:8081/actuator/prometheus` por esa red interna (ver
 [Prometheus y alertas](#prometheus-y-alertas)). También se puede comprobar a mano:
 
@@ -520,7 +551,7 @@ estas métricas de negocio y operación:
   métricas, que la aplicación mantiene fuera de la red pública a propósito (ver
   [Actuator](#actuator-y-puerto-de-gestión)).
 - **Comprobado de extremo a extremo** con el stack de Compose: el target `app:8081` aparece `up`, llegan las
-  métricas de negocio y de caché, y las cuatro reglas cargan sin errores. Tras dejar un mensaje en
+  métricas de negocio y de caché, y las cinco reglas cargan sin errores. Tras dejar un mensaje en
   `certificates.enrollment-completed.dlq`, `MessagesInDeadLetterQueue` pasó a `firing` al cumplirse el minuto.
 - **El CI valida la configuración y las reglas** con `promtool` (ver [Integración continua](#integración-continua)).
 - Queda fuera un Alertmanager, que decidiría a quién avisar y cómo.
@@ -635,6 +666,24 @@ EnrollmentService.updateProgress(100) → Enrollment COMPLETED + outbox Enrollme
 
 Cada flecha hacia RabbitMQ sale del outbox, nunca de un `send` directo dentro de la petición.
 
+### Confirmación del pago: por qué no hay un endpoint "pagar"
+
+El enunciado pide confirmar el pago de forma simulada (5.2.3) y que el estudiante pueda pagar (tabla de roles), y
+a la vez que esa confirmación se procese de forma asíncrona por RabbitMQ, con un consumidor que procesa el pago y
+publica `PaymentConfirmed` o `PaymentFailed` (7.1). Aquí se resuelve así:
+
+- **Pagar es inscribirse.** `POST /api/enrollments` crea el `Payment` en `PENDING` junto a la inscripción, y
+  `EnrollmentCreated` actúa como orden de cobro.
+- **Confirmar es trabajo del consumidor.** `PaymentProcessor` cobra contra `SimulatedPaymentGateway` y publica
+  el resultado. Nada en la petición HTTP decide si el pago sale bien.
+- **Por qué no un endpoint en el que el estudiante confirma su propio pago:** el resultado de un cobro lo
+  decide la pasarela, nunca quien paga. Un endpoint así permitiría activar una inscripción sin cobrarla. Con una
+  pasarela real, su confirmación llegaría por un *webhook*, que sería otro adaptador de entrada con el mismo
+  efecto que el consumidor actual: publicar `PaymentConfirmed`.
+- **Cómo probar el rechazo.** La pasarela simulada aprueba cualquier importe hasta
+  `app.payments.simulation.decline-above` (10 000 por defecto) y rechaza los superiores. Un curso con un precio
+  mayor recorre la rama `PaymentFailed`: la inscripción se cancela y la plaza se libera.
+
 ## Concurrencia: reserva de plazas
 
 **Estrategia elegida: actualización atómica condicional en SQL.**
@@ -645,8 +694,8 @@ UPDATE courses SET seats_taken = seats_taken + 1, version = version + 1
 ```
 
 Si la sentencia actualiza 0 filas, no hay plaza (o el curso no está publicado). Entonces el servicio carga el
-curso y `Course.assertAcceptsEnrollment()` decide qué excepción de dominio corresponde
-(`CourseFullException` → 409, `InvalidCourseStateException`).
+curso y `Course.assertAcceptsEnrollment()` decide qué excepción de dominio corresponde: `CourseFullException`
+si está lleno, o `InvalidStateTransitionException` si no está `PUBLISHED`. Las dos responden 409.
 
 Por qué esta y no las otras dos que acepta el enunciado:
 
@@ -676,7 +725,7 @@ inscripción:
 - **Primera petición:** inserta la clave, inscribe y guarda la respuesta (el id de la inscripción).
 - **Reintento con la misma clave y la misma petición:** devuelve la inscripción original sin reservar otra plaza.
 - **Misma clave con otra petición** (distinto estudiante o curso, comparado por hash SHA-256):
-  `IdempotencyKeyReusedException` (409/422).
+  `IdempotencyKeyReusedException` (422).
 - **Dos reintentos simultáneos:** el segundo queda bloqueado en el `INSERT` hasta que el primero confirma, y
   entonces devuelve su resultado.
 - **Si la inscripción falla:** la clave se revierte con ella, así que el cliente puede reintentar con la misma
@@ -837,7 +886,7 @@ y `size` va de 1 a 100 (20 por defecto).
 
 | Tool | Qué hace | Parámetros | Quién puede usarla |
 |---|---|---|---|
-| `list_categories` | Lista las categorías por orden alfabético | `page?`, `size?` | cualquier usuario |
+| `list_categories` | Lista las categorías por orden alfabético | `name?`, `status?`, `page?`, `size?` | cualquier usuario |
 | `get_category` | Devuelve una categoría | `categoryId` | cualquier usuario |
 | `create_category` | Crea una categoría (nombre único) | `name`, `description?` | ADMIN |
 | `list_courses` | Lista los cursos, del más reciente al más antiguo | `page?`, `size?` | cualquier usuario (un STUDENT solo ve `PUBLISHED`) |
@@ -846,14 +895,14 @@ y `size` va de 1 a 100 (20 por defecto).
 | `create_course` | Crea un curso en `DRAFT` | `title`, `description?`, `durationHours`, `level`, `price`, `capacity`, `categoryId`, `instructorId` | ADMIN, o el INSTRUCTOR que lo imparte |
 | `publish_course` | Publica un curso `DRAFT` | `courseId` | ADMIN o el instructor del curso |
 | `archive_course` | Archiva un curso: deja de aceptar inscripciones | `courseId` | ADMIN o el instructor del curso |
-| `list_students` | Lista los estudiantes | `page?`, `size?` | ADMIN |
+| `list_students` | Lista los estudiantes | `name?`, `email?`, `page?`, `size?` | ADMIN |
 | `get_student` | Devuelve un estudiante | `studentId` | ADMIN o el propio estudiante |
 | `enroll_student` | Inscribe al estudiante del token: reserva plaza y crea el pago, y devuelve `PENDING_PAYMENT` | `courseId`, `idempotencyKey` | STUDENT |
 | `get_enrollment` | Devuelve el estado y el progreso de una inscripción | `enrollmentId` | ADMIN, su estudiante o el instructor del curso |
 | `update_enrollment_progress` | Fija el progreso (0-100). Al llegar a 100 la inscripción se completa y se emite el certificado | `enrollmentId`, `progress` | ADMIN o su estudiante |
 | `cancel_enrollment` | Cancela una inscripción y libera su plaza | `enrollmentId` | ADMIN o su estudiante |
-| `list_students_by_course` | Lista los estudiantes inscritos en un curso | `courseId`, `page?`, `size?` | ADMIN o el instructor del curso |
-| `list_courses_by_student` | Lista los cursos de un estudiante | `studentId`, `page?`, `size?` | ADMIN o el propio estudiante |
+| `list_students_by_course` | Lista los estudiantes inscritos en un curso | `courseId`, `status?`, `page?`, `size?` | ADMIN o el instructor del curso |
+| `list_courses_by_student` | Lista los cursos de un estudiante | `studentId`, `status?`, `page?`, `size?` | ADMIN o el propio estudiante |
 
 - `idempotencyKey` es obligatoria en `enroll_student` por la misma razón que la cabecera `Idempotency-Key`
   en REST: un agente que reintenta tras un *timeout* recibe la inscripción original en lugar de ocupar otra
@@ -861,8 +910,10 @@ y `size` va de 1 a 100 (20 por defecto).
 - Cada tool declara las *hints* de MCP que le corresponden (`readOnlyHint` en las consultas,
   `idempotentHint`, `destructiveHint`). Los clientes las usan para decidir cuándo pedir confirmación.
 
-**Cómo probarlo.** Con la aplicación arrancada (Compose o `./mvnw spring-boot:run`), obtén un token con las
-credenciales de tu `.env`:
+**Cómo probarlo.** Con la aplicación arrancada (Compose o `./mvnw spring-boot:run`), obtén un token de ADMIN.
+Fuera del devcontainer, carga antes las credenciales de tu `.env` con `set -a; . ./.env; set +a`; dentro, el
+shell ya las tiene (ver la nota sobre las variables del devcontainer en
+[Arrancar el proyecto](#arrancar-el-proyecto)):
 
 ```bash
 TOKEN=$(curl -s localhost:8080/api/auth/token -H 'Content-Type: application/json' \
@@ -941,7 +992,7 @@ Spring Cache con Caffeine (en memoria), configurado en `shared.config.CacheConfi
 | Caché | Qué guarda | TTL | Se invalida al... |
 |---|---|---|---|
 | `categories` | categoría por id | 10 min | editar, archivar, activar o borrar esa categoría |
-| `category-pages` | páginas del listado de categorías (clave: `page`, `size`, `sort`) | 10 min | cualquier cambio en categorías |
+| `category-pages` | páginas del listado de categorías sin filtros (clave: `page`, `size`, `sort`); las filtradas no se cachean porque casi nunca se repiten | 10 min | cualquier cambio en categorías |
 | `instructors` | instructor por id | 10 min | editar o borrar ese instructor |
 | `courses` | curso por id, con sus plazas disponibles | 1 min | editar, publicar, archivar o borrar el curso; **reservar o liberar una plaza**; renombrar su categoría o su instructor |
 
@@ -991,7 +1042,7 @@ invalidaciones no cambian.
 
 ## Tests
 
-`./mvnw test` ejecuta los 124 tests en unos 45 segundos. Casi todos los de integración comparten un único
+`./mvnw test` ejecuta los 137 tests en menos de un minuto. Casi todos los de integración comparten un único
 contexto de Spring y un único par de contenedores (`AbstractIntegrationTest`), por eso la suite es rápida pese
 a usar PostgreSQL y RabbitMQ reales. Hay otros dos contextos:
 
@@ -1005,9 +1056,10 @@ a usar PostgreSQL y RabbitMQ reales. Hay otros dos contextos:
 | **Unitarios de dominio** | Máquinas de estado e invariantes de `Course` y `Enrollment`, sin Spring ni mocks | `CourseTest`, `EnrollmentTest` |
 | **Unitarios de casos de uso** (Mockito) | Ramas de error y lo que *no* debe ocurrir: no consumir plaza si ya está inscrito, no cobrar una inscripción cancelada, no reactivar una cancelada, no emitir un segundo certificado, entregas duplicadas sin efectos, login que no revela qué emails existen | `EnrollmentServiceTest`, `PaymentProcessorTest`, `PaymentOutcomeHandlerTest`, `CertificateIssuerTest`, `IdempotentRequestsTest`, `AccountServiceTest` |
 | **Unitarios de mapeo** | Que cada campo anidado o derivado de las vistas sale de su origen correcto | `CatalogViewMapperTest`, `EnrollmentViewMapperTest` |
-| **Integración** (Testcontainers) | Concurrencia sobre el aforo (20 hilos, 3 plazas), flujo completo por RabbitMQ, idempotencia de consumidores con entregas duplicadas, mensaje envenenado → DLQ, `Idempotency-Key` | `EnrollmentConcurrencyTest`, `EnrollmentFlowTest`, `ConsumerIdempotencyTest` |
-| **HTTP** (MockMvc) | Flujo end-to-end por la API con cada rol, mapeo de errores a `problem+json`, 401/403 y reglas de propiedad, ausencia de N+1 | `EnrollmentApiTest`, `ErrorHandlingApiTest`, `SecurityApiTest`, `QueryEfficiencyTest` |
-| **Puertos reales** | Actuator accesible sin credenciales solo en el puerto de gestión, health y readiness con BD y broker, API protegida y ausente en ese puerto | `ManagementPortTest` |
+| **Integración** (Testcontainers) | Concurrencia sobre el aforo (20 hilos, 3 plazas), flujo completo por RabbitMQ, idempotencia de consumidores con entregas duplicadas, mensaje envenenado → DLQ sin reintentos, mensaje que falla al procesarse → reintentos con backoff → DLQ, `Idempotency-Key` | `EnrollmentConcurrencyTest`, `EnrollmentFlowTest`, `ConsumerIdempotencyTest` |
+| **HTTP** (MockMvc) | Flujo end-to-end por la API con cada rol, mapeo de errores a `problem+json`, 401/403 y reglas de propiedad, filtros de los listados, ausencia de N+1 (también con filtro) | `EnrollmentApiTest`, `ErrorHandlingApiTest`, `SecurityApiTest`, `ListFilteringApiTest`, `QueryEfficiencyTest` |
+| **Documentación de la API** | Cada operación de la especificación OpenAPI tiene su código de éxito real y todos sus errores como `ProblemDetail` | `ApiDocumentationTest` |
+| **Puertos reales** | Actuator accesible sin credenciales solo en el puerto de gestión, health y readiness con BD y broker, `info` con la compilación y Java, API protegida y ausente en ese puerto | `ManagementPortTest` |
 | **Virtual threads** | Peticiones HTTP, consumidores RabbitMQ y tareas programadas se ejecutan en virtual threads | `VirtualThreadsTest` |
 | **Observabilidad** | `correlationId` y traza de OpenTelemetry propagados de la petición HTTP al consumidor a través del outbox y RabbitMQ, ids no seguros sustituidos, contadores por resultado, *gauges* de DLQ y de outbox `FAILED` | `ObservabilityTest` |
 | **Caché** | Lecturas servidas desde la caché, invalidación en cada escritura (plazas incluidas), permisos aplicados también en los aciertos, métricas | `CatalogCacheTest` |
@@ -1040,7 +1092,7 @@ paralelo:
 
 | Job | Qué hace |
 |---|---|
-| Build and test | `./mvnw -B verify` con Java 21 (Temurin): compila y ejecuta los 124 tests. Los de integración usan el Docker que ya traen los runners `ubuntu-latest`, así que Testcontainers funciona sin configuración. Si algo falla, sube los informes de Surefire como artefacto. |
+| Build and test | `./mvnw -B verify` con Java 21 (Temurin): compila y ejecuta los 137 tests. Los de integración usan el Docker que ya traen los runners `ubuntu-latest`, así que Testcontainers funciona sin configuración. Si algo falla, sube los informes de Surefire como artefacto. |
 | Docker image and deployment config | Construye la imagen del `Dockerfile`, valida `docker-compose.yml` con `.env.example`, valida el JSON del dashboard de Grafana y valida la configuración y las alertas de Prometheus con `promtool`. |
 
 - Reutiliza las dependencias de Maven entre ejecuciones (caché de `setup-java`), tiene permisos de solo
@@ -1073,7 +1125,8 @@ paralelo:
 - [x] Casos de uso de inscripción/pago/certificado con reserva atómica de plazas
 - [x] Tests de integración: concurrencia sobre el aforo, flujo completo por RabbitMQ, idempotencia de
       consumidores y de `Idempotency-Key`, mensaje envenenado a la DLQ
-- [x] Endpoints REST con validación, paginación y OpenAPI; manejo de errores centralizado (ProblemDetail)
+- [x] Endpoints REST con validación, paginación, filtros y OpenAPI (códigos de éxito y errores documentados);
+      manejo de errores centralizado (ProblemDetail)
 - [x] Tests HTTP end-to-end, de errores y de ausencia de N+1
 - [x] Seguridad JWT por rol, con reglas de propiedad por recurso y tests de 401/403
 - [x] Tests unitarios de dominio y de casos de uso con dobles de prueba (Mockito)
