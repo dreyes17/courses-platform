@@ -1,0 +1,40 @@
+# Alerts on the business and messaging metrics the application exports (see README, "Métricas").
+groups:
+  - name: courses
+    rules:
+      - alert: CoursesInstanceDown
+        expr: up{job="courses"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Prometheus can't scrape the courses application ({{ $labels.instance }})"
+
+      - alert: MessagesInDeadLetterQueue
+        expr: courses_messaging_dlq_messages > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} message(s) parked in {{ $labels.queue }}"
+          description: >-
+            A consumer rejected these messages after exhausting its retries. Inspect them in the RabbitMQ UI
+            and republish or discard them once the cause is fixed.
+
+      - alert: OutboxEventsFailed
+        expr: courses_outbox_events{status="failed"} > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $value }} outbox event(s) could not be published"
+          description: >-
+            The relay gave up on these events; they need manual intervention (see README, known limitations).
+
+      - alert: OutboxPublishingStalled
+        # The relay drains the outbox every few hundred milliseconds, so a backlog that never drops below 50
+        # for five minutes means it can't publish (broker down, confirms timing out...).
+        expr: min_over_time(courses_outbox_events{status="pending"}[5m]) > 50
+        labels:
+          severity: warning
+        annotations:
+          summary: "The outbox backlog has stayed above 50 pending events for 5 minutes"

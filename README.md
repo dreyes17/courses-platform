@@ -12,13 +12,15 @@ Stack: Java 21 · Spring Boot 4.1 · PostgreSQL · Flyway · Spring AMQP · Spri
 
 ```bash
 cp .env.example .env          # secretos de evaluación local; .env está fuera de git
-docker compose up --build     # PostgreSQL + RabbitMQ + aplicación
+docker compose up --build     # PostgreSQL + RabbitMQ + aplicación + Prometheus
 ```
 
 - La aplicación queda en <http://localhost:8080>. La documentación interactiva está en
   <http://localhost:8080/swagger-ui.html> y la especificación OpenAPI en `/v3/api-docs`.
 - La interfaz de RabbitMQ está en <http://localhost:15672>, con las credenciales de `.env`. Sirve para ver
   las colas y las DLQ.
+- Prometheus está en <http://localhost:9090>, solo accesible desde tu máquina. Recoge las métricas de la
+  aplicación y evalúa las alertas (ver [Prometheus y alertas](#prometheus-y-alertas)).
 - Hay una cuenta ADMIN creada con `ADMIN_EMAIL`/`ADMIN_PASSWORD`. Ver [Seguridad](#seguridad) para obtener un
   token.
 - `docker compose down -v` lo para todo y borra los volúmenes de datos.
@@ -30,8 +32,8 @@ docker compose up --build     # PostgreSQL + RabbitMQ + aplicación
 > IDE aplican esa configuración automáticamente. Si `http://localhost:8080` no responde, reenvía el puerto
 > `8080` del contenedor con el mecanismo de tu IDE y usa la dirección local que te asigne, que puede no ser el
 > 8080 si ese puerto ya está ocupado en tu máquina. Para la interfaz de RabbitMQ de este stack, haz lo mismo
-> con el `15672`. Ojo: ese puerto de tu máquina puede estar apuntando ya a la RabbitMQ del propio devcontainer,
-> que es otra instancia con otras credenciales.
+> con el `15672`, y para Prometheus con el `9090`. Ojo: el `15672` de tu máquina puede estar apuntando ya a
+> la RabbitMQ del propio devcontainer, que es otra instancia con otras credenciales.
 >
 > Si ejecutas `docker compose` directamente en tu máquina, fuera del devcontainer, no hace falta nada de esto.
 
@@ -41,8 +43,8 @@ Cómo se comporta el despliegue:
   detiene y dice cuál.
 - **Orden de arranque:** la aplicación espera a que Postgres y RabbitMQ pasen su healthcheck. Su propio
   healthcheck consulta `/actuator/health/readiness` en el puerto de gestión (ver [Actuator](#actuator-y-puerto-de-gestión)).
-- **Puertos:** solo se publica el 8080 (la API). Actuator escucha en el 8081, que solo es accesible dentro
-  de la red de Docker.
+- **Puertos:** se publican el 8080 (la API), el 15672 (interfaz de RabbitMQ) y el 9090 (Prometheus, solo en
+  `127.0.0.1`). Actuator escucha en el 8081, que solo es accesible dentro de la red de Docker.
 - **Arranque de la aplicación:** Flyway crea el esquema y la topología de RabbitMQ se declara sola, sin
   pasos manuales.
 - **Imagen:** el `Dockerfile` compila con el wrapper `mvnw` en una etapa JDK y ejecuta en una etapa JRE, con
@@ -362,7 +364,8 @@ procesos que están sanos, y eso no arreglaría nada.
   aleatorio, y aunque alguien configurase el mismo puerto para API y gestión, esta cadena nunca podría abrir
   la API.
 
-Con Compose, un Prometheus en la misma red leería `http://app:8081/actuator/prometheus`. Así se comprobó:
+En Compose, el servicio `prometheus` lee `http://app:8081/actuator/prometheus` por esa red interna (ver
+[Prometheus y alertas](#prometheus-y-alertas)). También se puede comprobar a mano:
 
 ```bash
 docker run --rm --network courses_default curlimages/curl -s http://app:8081/actuator/health
@@ -394,8 +397,27 @@ estas métricas de negocio y operación:
   a la BD (conteo por estado sobre un índice que ya existe). Si alguno no responde, el *gauge* vale `NaN` en
   lugar de romper la exportación del resto.
 
-Alertas naturales sobre estas métricas: `courses_messaging_dlq_messages > 0`, `courses_outbox_events{status="failed"} > 0`
-y un `pending` que crece de forma sostenida (el relay no consigue publicar).
+### Prometheus y alertas
+
+`docker compose up` levanta también Prometheus 3.15, configurado en `observability/prometheus/`. Lee
+`http://app:8081/actuator/prometheus` cada 15 segundos por la red interna y evalúa estas reglas
+(`alerts.yml`):
+
+| Alerta | Condición | Severidad | Qué significa |
+|---|---|---|---|
+| `CoursesInstanceDown` | `up == 0` durante 1 min | critical | Prometheus no consigue leer la aplicación |
+| `MessagesInDeadLetterQueue` | `courses_messaging_dlq_messages > 0` durante 1 min | warning | Un consumidor agotó sus reintentos. Hay que revisar los mensajes y republicarlos o descartarlos |
+| `OutboxEventsFailed` | `courses_outbox_events{status="failed"} > 0` | critical | Eventos que el relay abandonó; requieren intervención manual |
+| `OutboxPublishingStalled` | `pending` no baja de 50 en 5 min | warning | El relay vacía el outbox cada 500 ms, así que un atasco sostenido indica que no puede publicar |
+
+- **La interfaz queda en <http://localhost:9090> y se publica solo en `127.0.0.1`.** Muestra todas las
+  métricas, que la aplicación mantiene fuera de la red pública a propósito (ver
+  [Actuator](#actuator-y-puerto-de-gestión)).
+- **Comprobado de extremo a extremo** con el stack de Compose: el target `app:8081` aparece `up`, llegan las
+  métricas de negocio y de caché, y las cuatro reglas cargan sin errores. Tras dejar un mensaje en
+  `certificates.enrollment-completed.dlq`, `MessagesInDeadLetterQueue` pasó a `firing` al cumplirse el minuto.
+- Quedan fuera un Alertmanager (a quién avisar y cómo) y los dashboards de Grafana, que corresponden al
+  bonus de trazas y dashboards.
 
 ### Logs con correlación
 

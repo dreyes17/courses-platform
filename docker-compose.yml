@@ -1,4 +1,4 @@
-# Runs the whole platform: PostgreSQL, RabbitMQ and the application.
+# Runs the whole platform: PostgreSQL, RabbitMQ, the application and Prometheus.
 #   cp .env.example .env && docker compose up --build
 # Secrets come only from the environment / .env (git-ignored); missing ones stop compose with an error.
 name: courses
@@ -61,7 +61,7 @@ services:
     ports:
       - "8080:8080"   # API only
     # Actuator (health, info, prometheus) on 8081: reachable by other containers in this network
-    # (e.g. a Prometheus scraper at http://app:8081/actuator/prometheus) but deliberately not published.
+    # (the prometheus service below scrapes http://app:8081/actuator/prometheus) but deliberately not published.
     expose:
       - "8081"
     healthcheck:
@@ -71,6 +71,20 @@ services:
       start_period: 60s
       retries: 5
 
+  # Scrapes the app's management port and evaluates the alert rules in observability/prometheus/alerts.yml.
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    restart: unless-stopped
+    depends_on:
+      - app
+    volumes:
+      - ./observability/prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    ports:
+      # Loopback only: the UI shows every metric, which the app keeps off the public network on purpose.
+      - "127.0.0.1:9090:9090"
+
 volumes:
   postgres-data:
   rabbitmq-data:
+  prometheus-data:

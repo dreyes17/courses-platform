@@ -1,0 +1,14 @@
+# Scrapes the application's management port inside the Compose network (see README, "Prometheus").
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - alerts.yml   # relative to this file
+
+scrape_configs:
+  - job_name: courses
+    metrics_path: /actuator/prometheus
+    static_configs:
+      # Port 8081 is only exposed inside the Compose network, so Prometheus needs no credentials.
+      - targets: ["app:8081"]
