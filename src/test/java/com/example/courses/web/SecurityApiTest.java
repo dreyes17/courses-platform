@@ -136,6 +136,45 @@ class SecurityApiTest extends ApiTestSupport {
     }
 
     @Test
+    void instructorsOnlySeeTheUnpublishedCoursesTheyTeach() {
+        Account owner = createInstructor();
+        Account other = createInstructor();
+        String draftId = createDraftCourse(owner, 5, BigDecimal.TEN);
+        String publishedId = createPublishedCourse(owner, 5, BigDecimal.TEN);
+
+        assertThat(get("/api/courses/" + draftId, other.token())).hasStatus(HttpStatus.NOT_FOUND);
+        assertThat(get("/api/courses/" + publishedId, other.token())).hasStatusOk();
+        assertThat(get("/api/courses/" + draftId, owner.token())).hasStatusOk();
+        assertThat(get("/api/courses/" + draftId, adminToken())).hasStatusOk();
+        for (String uri : List.of("/api/courses?status=DRAFT&size=100", "/api/courses/scroll?status=DRAFT&size=100")) {
+            assertThat(get(uri, other.token())).bodyJson().extractingPath("$.content[*].id").asArray()
+                    .doesNotContain(draftId);
+            assertThat(get(uri, owner.token())).bodyJson().extractingPath("$.content[*].id").asArray()
+                    .contains(draftId);
+        }
+    }
+
+    @Test
+    void deletingAnInstructorAlsoDeletesTheirLoginAccount() {
+        Account instructor = createInstructor();
+
+        assertThat(delete("/api/instructors/" + instructor.id(), adminToken())).hasStatus(HttpStatus.NO_CONTENT);
+        assertThat(get("/api/instructors/" + instructor.id(), adminToken())).hasStatus(HttpStatus.NOT_FOUND);
+        assertThat(post("/api/auth/token", null, """
+                {"email": "%s", "password": "%s"}""".formatted(instructor.email(), PASSWORD)))
+                .hasStatus(HttpStatus.UNAUTHORIZED);
+    }
+
+    @Test
+    void anInstructorWithCoursesKeepsBothProfileAndAccount() {
+        Account instructor = createInstructor();
+        createDraftCourse(instructor, 5, BigDecimal.TEN);
+
+        assertThat(delete("/api/instructors/" + instructor.id(), adminToken())).hasStatus(HttpStatus.CONFLICT);
+        assertThat(get("/api/instructors/" + instructor.id(), login(instructor.email(), PASSWORD))).hasStatusOk();
+    }
+
+    @Test
     void onlyStudentsCanEnroll() {
         String courseId = createPublishedCourse(createInstructor(), 5, BigDecimal.TEN);
 

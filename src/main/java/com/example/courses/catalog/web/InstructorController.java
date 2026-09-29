@@ -81,11 +81,11 @@ class InstructorController {
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
-    @Operation(summary = "Delete an instructor with no courses (409 otherwise). ADMIN only")
+    @Operation(summary = "Delete an instructor with no courses (409 otherwise), and their login account. ADMIN only")
     @ApiResponse(responseCode = "409", description = "The instructor still has courses")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     ResponseEntity<Void> delete(@PathVariable UUID id) {
-        instructors.delete(id);
+        accounts.deleteInstructor(id);
         return ResponseEntity.noContent().build();
     }
 }

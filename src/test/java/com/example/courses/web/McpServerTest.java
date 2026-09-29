@@ -40,6 +40,11 @@ class McpServerTest {
 
     private final HttpClient http = HttpClient.newHttpClient();
     private final List<McpSyncClient> clients = new ArrayList<>();
+    /**
+     * Logged in once for the whole class: this context enforces the real login rate limit (10 per minute per IP),
+     * which a fresh admin login per call would exhaust.
+     */
+    private static String adminToken;
 
     @LocalServerPort
     private int port;
@@ -52,15 +57,19 @@ class McpServerTest {
     }
 
     @Test
-    void toolsCoverCategoriesCoursesStudentsAndEnrollments() {
+    void toolsCoverCategoriesCoursesInstructorsStudentsAndEnrollments() {
         List<Tool> tools = client(adminToken()).listTools().tools();
 
         assertThat(tools).extracting(Tool::name).containsExactlyInAnyOrder(
-                "list_categories", "get_category", "create_category",
-                "list_courses", "search_courses", "get_course", "create_course", "publish_course", "archive_course",
+                "list_categories", "get_category", "create_category", "update_category", "archive_category",
+                "activate_category", "delete_category",
+                "list_courses", "search_courses", "get_course", "create_course", "update_course", "publish_course",
+                "archive_course", "delete_course",
+                "create_instructor", "list_instructors", "get_instructor", "update_instructor", "delete_instructor",
                 "list_students", "get_student",
                 "enroll_student", "get_enrollment", "update_enrollment_progress", "cancel_enrollment",
-                "list_students_by_course", "list_courses_by_student");
+                "list_enrollments", "list_students_by_course", "list_courses_by_student",
+                "get_enrollment_payment", "get_enrollment_certificate", "verify_certificate");
         assertThat(tools).allSatisfy(tool -> assertThat(tool.description()).isNotBlank());
         Tool enroll = tools.stream().filter(tool -> tool.name().equals("enroll_student")).findFirst().orElseThrow();
         assertThat(enroll.inputSchema().get("required")).asInstanceOf(LIST)
@@ -100,6 +109,60 @@ class McpServerTest {
                 .get("totalElements").asInt()).isEqualTo(1);
         assertThat(ok(admin, "list_students_by_course", Map.of("courseId", courseId, "status", "CANCELLED"))
                 .get("totalElements").asInt()).isZero();
+        assertThat(ok(admin, "list_enrollments", Map.of("courseId", courseId)).get("content").get(0)
+                .get("enrollmentId").asString()).isEqualTo(enrollmentId);
+        assertThat(ok(student, "get_enrollment_payment", Map.of("enrollmentId", enrollmentId))
+                .get("status").asString()).isEqualTo("CONFIRMED");
+
+        // Completing it issues the certificate asynchronously; its code is then verifiable.
+        ok(student, "update_enrollment_progress", Map.of("enrollmentId", enrollmentId, "progress", 100));
+        String code = await().atMost(Duration.ofSeconds(15)).ignoreExceptions().until(
+                () -> ok(student, "get_enrollment_certificate", Map.of("enrollmentId", enrollmentId))
+                        .get("code").asString(), value -> value != null);
+        assertThat(ok(admin, "verify_certificate", Map.of("code", code)).get("courseTitle").asString())
+                .isEqualTo(title);
+    }
+
+    @Test
+    void anAiClientCanManageTheCatalogThroughTools() {
+        McpSyncClient admin = client(adminToken());
+        String categoryId = ok(admin, "create_category", Map.of("name", "MCP " + unique())).get("id").asString();
+        String renamed = "Renamed " + unique();
+        assertThat(ok(admin, "update_category", Map.of("categoryId", categoryId, "name", renamed))
+                .get("name").asString()).isEqualTo(renamed);
+        assertThat(ok(admin, "archive_category", Map.of("categoryId", categoryId)).get("status").asString())
+                .isEqualTo("ARCHIVED");
+        assertThat(ok(admin, "activate_category", Map.of("categoryId", categoryId)).get("status").asString())
+                .isEqualTo("ACTIVE");
+
+        String email = "mcp-instructor-" + unique() + "@teach.test";
+        String instructorId = ok(admin, "create_instructor", Map.of("name", "Grace Hopper", "email", email,
+                "password", PASSWORD)).get("id").asString();
+        assertThat(ok(admin, "list_instructors", Map.of("email", email)).get("totalElements").asInt()).isEqualTo(1);
+        McpSyncClient instructor = client(login(email, PASSWORD));
+        assertThat(ok(instructor, "update_instructor", Map.of("instructorId", instructorId, "name", "Grace B. Hopper",
+                "bio", "COBOL")).get("bio").asString()).isEqualTo("COBOL");
+        assertThat(ok(instructor, "get_instructor", Map.of("instructorId", instructorId)).get("name").asString())
+                .isEqualTo("Grace B. Hopper");
+
+        String courseId = ok(instructor, "create_course", Map.of("title", "Draft " + unique(), "durationHours", 8,
+                "level", "BEGINNER", "price", 25, "capacity", 3, "categoryId", categoryId,
+                "instructorId", instructorId)).get("id").asString();
+        JsonNode updated = ok(instructor, "update_course", Map.of("courseId", courseId, "title", "Updated",
+                "durationHours", 12, "level", "ADVANCED", "price", 30, "capacity", 10));
+        assertThat(updated.get("level").asString()).isEqualTo("ADVANCED");
+        assertThat(updated.get("capacity").asInt()).isEqualTo(10);
+
+        // Deletes answer with the removed id; a category with courses must be archived instead.
+        assertThat(error(admin, "delete_category", Map.of("categoryId", categoryId)))
+                .contains("still has courses");
+        assertThat(ok(instructor, "delete_course", Map.of("courseId", courseId)).get("deletedId").asString())
+                .isEqualTo(courseId);
+        assertThat(ok(admin, "delete_category", Map.of("categoryId", categoryId)).get("deletedId").asString())
+                .isEqualTo(categoryId);
+        assertThat(error(admin, "get_category", Map.of("categoryId", categoryId))).endsWith("not found");
+        assertThat(ok(admin, "delete_instructor", Map.of("instructorId", instructorId)).get("deletedId").asString())
+                .isEqualTo(instructorId);
     }
 
     @Test
@@ -117,6 +180,19 @@ class McpServerTest {
                 .isEqualTo("You are not allowed to perform this operation");
         assertThat(error(student, "get_course", Map.of("courseId", draftId)))
                 .isEqualTo("Course " + draftId + " not found");
+        assertThat(error(student, "list_instructors", Map.of()))
+                .isEqualTo("You are not allowed to perform this operation");
+
+        // Another instructor doesn't see the draft either, and can't change it.
+        String otherEmail = "mcp-instructor-" + unique() + "@teach.test";
+        ok(admin, "create_instructor", Map.of("name", "Other", "email", otherEmail, "password", PASSWORD));
+        McpSyncClient otherInstructor = client(login(otherEmail, PASSWORD));
+        assertThat(error(otherInstructor, "get_course", Map.of("courseId", draftId)))
+                .isEqualTo("Course " + draftId + " not found");
+        assertThat(ok(otherInstructor, "search_courses", Map.of("status", "DRAFT", "size", 100)).get("content")
+                .valueStream().map(course -> course.get("id").asString())).doesNotContain(draftId);
+        assertThat(error(otherInstructor, "delete_course", Map.of("courseId", draftId)))
+                .isEqualTo("You are not allowed to perform this operation");
     }
 
     @Test
@@ -170,7 +246,10 @@ class McpServerTest {
     }
 
     private String adminToken() {
-        return login(RealServerTest.ADMIN_EMAIL, RealServerTest.ADMIN_PASSWORD);
+        if (adminToken == null) {
+            adminToken = login(RealServerTest.ADMIN_EMAIL, RealServerTest.ADMIN_PASSWORD);
+        }
+        return adminToken;
     }
 
     private String studentToken() {

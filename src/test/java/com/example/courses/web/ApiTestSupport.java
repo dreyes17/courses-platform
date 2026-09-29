@@ -82,6 +82,10 @@ abstract class ApiTestSupport extends AbstractIntegrationTest {
         return send(mvc.get().uri(uri), token, null);
     }
 
+    protected MvcTestResult delete(String uri, String token) {
+        return send(mvc.delete().uri(uri), token, null);
+    }
+
     protected MvcTestResult enroll(String token, String courseId, String idempotencyKey) {
         return send(mvc.post().uri("/api/enrollments").header("Idempotency-Key", idempotencyKey), token, """
                 {"courseId": "%s"}""".formatted(courseId));

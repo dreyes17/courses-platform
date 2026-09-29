@@ -3,6 +3,7 @@ package com.example.courses.web;
 import com.example.courses.AbstractIntegrationTest;
 import com.example.courses.catalog.application.CourseSearchCriteria;
 import com.example.courses.catalog.application.CourseService;
+import com.example.courses.catalog.application.CourseVisibility;
 import com.example.courses.catalog.domain.Course;
 import com.example.courses.catalog.domain.CourseLevel;
 import com.example.courses.enrollment.application.EnrollmentService;
@@ -92,6 +93,26 @@ class QueryEfficiencyTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void everyEnrollmentLoadsStudentAndCourseInTheSameQuery() {
+        UUID courseId = publishedCourse(ROWS, BigDecimal.TEN);
+        for (int i = 0; i < ROWS; i++) {
+            enrollmentService.enroll(student(), courseId, null);
+        }
+
+        SqlStatementCounter.reset();
+        var page = enrollmentService.list(courseId, null, null, PageRequest.of(0, 20, Sort.by("enrolledAt")));
+
+        assertThat(page.getContent()).hasSize(ROWS)
+                .allSatisfy(row -> assertThat(row.studentEmail()).isNotBlank())
+                .allSatisfy(row -> assertThat(row.courseTitle()).isNotBlank());
+        assertThat(SqlStatementCounter.statements())
+                .as("one page query joining students and courses + at most one count query")
+                .hasSizeLessThanOrEqualTo(2)
+                .anySatisfy(sql -> assertThat(sql).containsIgnoringCase("join students")
+                        .containsIgnoringCase("join courses"));
+    }
+
+    @Test
     void courseSearchLoadsCategoryAndInstructorInTheSameQuery() {
         for (int i = 0; i < ROWS; i++) {
             publishedCourse(5, new BigDecimal("30.00"));
@@ -100,7 +121,8 @@ class QueryEfficiencyTest extends AbstractIntegrationTest {
                 new BigDecimal("35"), "course", true, null);
 
         SqlStatementCounter.reset();
-        var page = courseService.search(criteria, PageRequest.of(0, ROWS, Sort.by("createdAt")), false);
+        var page = courseService.search(criteria, PageRequest.of(0, ROWS, Sort.by("createdAt")),
+                CourseVisibility.ALL);
 
         assertThat(page.getContent()).hasSize(ROWS)
                 .allSatisfy(course -> assertThat(course.categoryName()).isNotBlank())
@@ -119,7 +141,7 @@ class QueryEfficiencyTest extends AbstractIntegrationTest {
         var criteria = new CourseSearchCriteria(null, null, null, null, null, null, null);
 
         SqlStatementCounter.reset();
-        var page = courseService.scroll(criteria, null, ROWS, false);
+        var page = courseService.scroll(criteria, null, ROWS, CourseVisibility.ALL);
 
         assertThat(page.content()).hasSize(ROWS)
                 .allSatisfy(course -> assertThat(course.categoryName()).isNotBlank())

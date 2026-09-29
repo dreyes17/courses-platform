@@ -4,6 +4,7 @@ import com.example.courses.catalog.domain.Course;
 import com.example.courses.catalog.domain.CourseLevel;
 import com.example.courses.catalog.domain.CourseStatus;
 import com.example.courses.shared.repository.SpecificationFilters;
+import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.jpa.domain.Specification;
 
 import java.math.BigDecimal;
@@ -44,6 +45,16 @@ public final class CourseSpecifications {
             filters.add((root, query, cb) -> cb.equal(root.get("status"), status));
         }
         return Specification.allOf(filters);
+    }
+
+    /** PUBLISHED courses, plus every course of the given instructor whatever its status (none when null). */
+    public static Specification<Course> publishedOrTaughtBy(UUID instructorId) {
+        return (root, query, cb) -> {
+            Predicate published = cb.equal(root.get("status"), CourseStatus.PUBLISHED);
+            return instructorId == null
+                    ? published
+                    : cb.or(published, cb.equal(root.get("instructor").get("id"), instructorId));
+        };
     }
 
     /**

@@ -11,8 +11,8 @@ import java.util.UUID;
 
 /**
  * Course views by id, whatever their status. A separate bean from CourseService for two reasons: the
- * "published only" check must run on every call, cache hits included (a cached draft must stay hidden from
- * students), and Spring's cache proxy doesn't intercept a bean's calls to itself.
+ * visibility check must run on every call, cache hits included (a cached draft must stay hidden from students
+ * and other instructors), and Spring's cache proxy doesn't intercept a bean's calls to itself.
  * <p>
  * Evicted by CourseService on every course edit, and by CourseRepository whenever a seat is reserved or
  * released, so availableSeats never lags behind an enrollment.

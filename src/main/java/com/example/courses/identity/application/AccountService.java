@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
+import java.util.UUID;
 
 @Service
 public class AccountService {
@@ -48,6 +49,16 @@ public class AccountService {
         InstructorView instructor = instructors.create(name, normalizedEmail, bio);
         users.save(UserAccount.instructor(normalizedEmail, passwordEncoder.encode(password), instructor.id()));
         return instructor;
+    }
+
+    /**
+     * Deletes the instructor together with their login account, which references them. While they still have
+     * courses the instructor can't be deleted, and the account deletion rolls back with it.
+     */
+    @Transactional
+    public void deleteInstructor(UUID instructorId) {
+        users.deleteByInstructorId(instructorId);
+        instructors.delete(instructorId);
     }
 
     @Transactional

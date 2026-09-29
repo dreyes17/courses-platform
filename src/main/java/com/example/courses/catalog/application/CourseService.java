@@ -2,7 +2,6 @@ package com.example.courses.catalog.application;
 
 import com.example.courses.catalog.domain.Category;
 import com.example.courses.catalog.domain.Course;
-import com.example.courses.catalog.domain.CourseStatus;
 import com.example.courses.catalog.domain.Instructor;
 import com.example.courses.catalog.repository.CategoryRepository;
 import com.example.courses.catalog.repository.CourseRepository;
@@ -87,22 +86,18 @@ public class CourseService {
         courses.delete(course);
     }
 
-    /** With publishedOnly, drafts and archived courses are reported as not found. Served from the cache. */
-    public CourseView get(UUID id, boolean publishedOnly) {
+    /** A course the caller can't see is reported as not found. Served from the cache. */
+    public CourseView get(UUID id, CourseVisibility visibility) {
         CourseView course = courseViews.get(id);
-        if (publishedOnly && course.status() != CourseStatus.PUBLISHED) {
+        if (!visibility.allows(course)) {
             throw new ResourceNotFoundException("Course", id);
         }
         return course;
     }
 
     @Transactional(readOnly = true)
-    public Page<CourseView> search(CourseSearchCriteria criteria, Pageable pageable, boolean publishedOnly) {
-        CourseStatus status = publishedOnly ? CourseStatus.PUBLISHED : criteria.status();
-        var specification = CourseSpecifications.matching(criteria.categoryId(), criteria.level(),
-                criteria.minPrice(), criteria.maxPrice(), criteria.title(), criteria.withAvailableSeats(),
-                status);
-        return courses.findAll(specification, pageable).map(mapper::toView);
+    public Page<CourseView> search(CourseSearchCriteria criteria, Pageable pageable, CourseVisibility visibility) {
+        return courses.findAll(matching(criteria, visibility), pageable).map(mapper::toView);
     }
 
     /**
@@ -113,11 +108,8 @@ public class CourseService {
      */
     @Transactional(readOnly = true)
     public CursorPage<CourseView> scroll(CourseSearchCriteria criteria, String cursor, int size,
-                                         boolean publishedOnly) {
-        CourseStatus status = publishedOnly ? CourseStatus.PUBLISHED : criteria.status();
-        Specification<Course> specification = CourseSpecifications.matching(criteria.categoryId(), criteria.level(),
-                        criteria.minPrice(), criteria.maxPrice(), criteria.title(), criteria.withAvailableSeats(),
-                        status)
+                                         CourseVisibility visibility) {
+        Specification<Course> specification = matching(criteria, visibility)
                 .and(CourseSpecifications.fetchingCategoryAndInstructor());
         if (cursor != null) {
             CourseCursor after = CourseCursor.decode(cursor);
@@ -128,6 +120,16 @@ public class CourseService {
         List<Course> page = hasMore ? rows.subList(0, size) : rows;
         String nextCursor = hasMore ? CourseCursor.after(page.getLast()).encode() : null;
         return new CursorPage<>(page.stream().map(mapper::toView).toList(), nextCursor);
+    }
+
+    /** The requested filters, restricted to the courses the caller can see. */
+    private static Specification<Course> matching(CourseSearchCriteria criteria, CourseVisibility visibility) {
+        Specification<Course> filters = CourseSpecifications.matching(criteria.categoryId(), criteria.level(),
+                criteria.minPrice(), criteria.maxPrice(), criteria.title(), criteria.withAvailableSeats(),
+                criteria.status());
+        return visibility.everything()
+                ? filters
+                : filters.and(CourseSpecifications.publishedOrTaughtBy(visibility.instructorId()));
     }
 
     private Course find(UUID id) {

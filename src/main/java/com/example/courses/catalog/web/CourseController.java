@@ -3,6 +3,7 @@ package com.example.courses.catalog.web;
 import com.example.courses.catalog.application.CourseSearchCriteria;
 import com.example.courses.catalog.application.CourseService;
 import com.example.courses.catalog.application.CourseView;
+import com.example.courses.catalog.application.CourseVisibility;
 import com.example.courses.catalog.web.CatalogRequests.CreateCourseRequest;
 import com.example.courses.catalog.web.CatalogRequests.UpdateCourseRequest;
 import com.example.courses.shared.application.CursorPage;
@@ -66,11 +67,12 @@ class CourseController {
     @Operation(summary = "Search courses",
             description = "All filters are optional and combinable: categoryId, level, minPrice, maxPrice, "
                     + "title (case-insensitive substring), withAvailableSeats, status. "
-                    + "Students only ever see PUBLISHED courses.")
+                    + "ADMIN sees every course, an INSTRUCTOR the PUBLISHED ones plus their own in any status, "
+                    + "and a STUDENT only PUBLISHED ones.")
     PageResponse<CourseView> search(@ParameterObject CourseSearchCriteria criteria,
                                     @ParameterObject @PageableDefault(size = 20, sort = "createdAt") Pageable pageable,
                                     @AuthenticationPrincipal Jwt jwt) {
-        return PageResponse.from(courses.search(criteria, pageable, onlyPublishedFor(jwt)));
+        return PageResponse.from(courses.search(criteria, pageable, visibilityFor(jwt)));
     }
 
     @GetMapping("/scroll")
@@ -78,18 +80,20 @@ class CourseController {
             description = "Same filters as GET /api/courses. Omit cursor for the first page, then send the "
                     + "nextCursor of each response as cursor; nextCursor is null on the last page. Unlike page "
                     + "numbers, courses created or removed while scrolling never cause duplicates or gaps. "
-                    + "Students only ever see PUBLISHED courses.")
+                    + "Sees the same courses as GET /api/courses.")
     CursorPage<CourseView> scroll(@ParameterObject CourseSearchCriteria criteria,
                                   @RequestParam(required = false) String cursor,
                                   @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
                                   @AuthenticationPrincipal Jwt jwt) {
-        return courses.scroll(criteria, cursor, size, onlyPublishedFor(jwt));
+        return courses.scroll(criteria, cursor, size, visibilityFor(jwt));
     }
 
     @GetMapping("/{id}")
-    @Operation(summary = "Get a course (404 for students when it isn't PUBLISHED)")
+    @Operation(summary = "Get a course",
+            description = "404 when the caller can't see it: a course that isn't PUBLISHED is only visible to "
+                    + "ADMIN and to its own instructor.")
     CourseView get(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) {
-        return courses.get(id, onlyPublishedFor(jwt));
+        return courses.get(id, visibilityFor(jwt));
     }
 
     @PutMapping("/{id}")
@@ -133,7 +137,8 @@ class CourseController {
         return ResponseEntity.noContent().build();
     }
 
-    private static boolean onlyPublishedFor(Jwt jwt) {
-        return CurrentUser.from(jwt).isStudent();
+    private static CourseVisibility visibilityFor(Jwt jwt) {
+        CurrentUser user = CurrentUser.from(jwt);
+        return CourseVisibility.of(user.isAdmin(), user.instructorId());
     }
 }
