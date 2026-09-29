@@ -9,6 +9,24 @@ spring:
     virtual:
       enabled: true
 
+  # MCP server (bonus): the same use cases as the REST API, exposed as tools for AI clients at /mcp and protected
+  # by the same bearer token. Stateless: every tool call is one self-contained HTTP request, like the REST API,
+  # so any instance can serve it and there is no MCP session to keep.
+  ai:
+    mcp:
+      server:
+        name: courses
+        version: 1.0.0
+        protocol: STATELESS
+        type: SYNC
+        instructions: >-
+          Online course platform: catalog (categories, courses), students and enrollments. Every tool runs with
+          the permissions of the bearer token sent with the request (ADMIN, INSTRUCTOR or STUDENT).
+          Enrollments are confirmed asynchronously: enroll_student returns PENDING_PAYMENT and get_enrollment
+          shows when it becomes ACTIVE.
+        streamable-http:
+          mcp-endpoint: /mcp
+
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/courses}
     username: ${SPRING_DATASOURCE_USERNAME:courses}

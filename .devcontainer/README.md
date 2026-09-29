@@ -169,11 +169,13 @@ It starts with `--allow-mutative-tools`, so it can also create queues and publis
 
 ### Testing the app's own MCP server (bonus, section 16 of the brief)
 
-Once the app includes `spring-ai-starter-mcp-server-webmvc`:
+The app serves MCP at `http://localhost:8080/mcp` (stateless streamable HTTP), protected by the same bearer token as
+the REST API. See the root README, "Integración MCP", for the tools and how to get a token.
 
 ```bash
-npx @modelcontextprotocol/inspector      # open http://localhost:6274 and connect to http://localhost:8080/mcp (or /sse)
-claude mcp add --transport http courses http://localhost:8080/mcp   # use its tools from Claude Code
+npx @modelcontextprotocol/inspector      # open http://localhost:6274, Streamable HTTP, URL http://localhost:8080/mcp,
+                                         # header Authorization: Bearer <token>
+claude mcp add --transport http courses http://localhost:8080/mcp --header "Authorization: Bearer $TOKEN"
 ```
 
 ## Bootstrapping the project

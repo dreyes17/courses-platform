@@ -1,6 +1,6 @@
 package com.example.courses.web;
 
-import com.example.courses.TestcontainersConfiguration;
+import com.example.courses.support.RealServerTest;
 import org.apache.tomcat.util.threads.VirtualThreadExecutor;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.AmqpAdmin;
@@ -11,11 +11,8 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.rabbit.listener.RabbitListenerEndpointRegistry;
 import org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.micrometer.metrics.test.autoconfigure.AutoConfigureMetrics;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.tomcat.TomcatWebServer;
 import org.springframework.boot.web.server.context.WebServerApplicationContext;
-import org.springframework.context.annotation.Import;
 import org.springframework.scheduling.TaskScheduler;
 
 import java.time.Instant;
@@ -28,16 +25,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * spring.threads.virtual.enabled switches three thread sources to virtual threads: Tomcat's request executor,
  * the RabbitMQ listener containers and the scheduler that drives the outbox relay. Checks each one by running
  * work on it, not by inspecting configuration.
- * <p>
- * Same annotations as {@link ManagementPortTest} on purpose, so both reuse one application context with real
- * servers.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-        "management.server.port=0",
-        "app.jwt.secret=test-only-secret-at-least-32-bytes-long!"
-})
-@AutoConfigureMetrics
-@Import(TestcontainersConfiguration.class)
+@RealServerTest
 class VirtualThreadsTest {
 
     @Autowired

@@ -7,7 +7,7 @@ limitado, pagos con confirmación asíncrona y emisión de certificados por even
 RabbitMQ.
 
 Stack: Java 21 (virtual threads) · Spring Boot 4.1 · PostgreSQL · Flyway · Spring AMQP · Spring Security (JWT) ·
-Caffeine · MapStruct · Testcontainers · Prometheus · GitHub Actions.
+Caffeine · MapStruct · Spring AI (servidor MCP) · Testcontainers · Prometheus · GitHub Actions.
 
 ## Arrancar el proyecto
 
@@ -24,6 +24,7 @@ docker compose up --build     # PostgreSQL + RabbitMQ + aplicación + Prometheus
   las colas y las DLQ.
 - Prometheus está en <http://localhost:9090>, solo accesible desde tu máquina. Recoge las métricas de la
   aplicación y evalúa las alertas (ver [Prometheus y alertas](#prometheus-y-alertas)).
+- El servidor MCP está en `http://localhost:8080/mcp` (ver [Integración MCP](#integración-mcp)).
 - Hay una cuenta ADMIN creada con `ADMIN_EMAIL`/`ADMIN_PASSWORD`. Ver [Seguridad](#seguridad) para obtener un
   token.
 - `docker compose down -v` lo para todo y borra los volúmenes de datos.
@@ -46,8 +47,9 @@ Cómo se comporta el despliegue:
   detiene y dice cuál.
 - **Orden de arranque:** la aplicación espera a que Postgres y RabbitMQ pasen su healthcheck. Su propio
   healthcheck consulta `/actuator/health/readiness` en el puerto de gestión (ver [Actuator](#actuator-y-puerto-de-gestión)).
-- **Puertos:** se publican el 8080 (la API), el 15672 (interfaz de RabbitMQ) y el 9090 (Prometheus, solo en
-  `127.0.0.1`). Actuator escucha en el 8081, que solo es accesible dentro de la red de Docker.
+- **Puertos:** se publican el 8080 (la API y el servidor MCP), el 15672 (interfaz de RabbitMQ) y el 9090
+  (Prometheus, solo en `127.0.0.1`). Actuator escucha en el 8081, que solo es accesible dentro de la red de
+  Docker.
 - **Arranque de la aplicación:** Flyway crea el esquema y la topología de RabbitMQ se declara sola, sin
   pasos manuales.
 - **Imagen:** el `Dockerfile` compila con el wrapper `mvnw` en una etapa JDK y ejecuta en una etapa JRE, con
@@ -144,9 +146,9 @@ variable, junto con `ADMIN_EMAIL`/`ADMIN_PASSWORD` si quieres una cuenta ADMIN.
 Es una **arquitectura por capas organizada por contexto** (*package-by-feature*): el código se agrupa
 primero por *bounded context* y, dentro de cada uno, por capa. En cada contexto, `domain` contiene
 las entidades y sus invariantes, `repository` el acceso a datos, `application` los casos de uso (dueños de
-las transacciones, devuelven vistas `record`, nunca entidades), `web` los controladores REST y
-`messaging` los listeners de RabbitMQ. Controladores y listeners son adaptadores finos: validan o leen la
-entrada, delegan en `application` y traducen el resultado.
+las transacciones, devuelven vistas `record`, nunca entidades), `web` los controladores REST,
+`messaging` los listeners de RabbitMQ y `mcp` las tools del servidor MCP. Controladores, listeners y tools son
+adaptadores finos: validan o leen la entrada, delegan en `application` y traducen el resultado.
 
 | Paquete | Responsabilidad |
 |---|---|
@@ -200,7 +202,8 @@ protegidas igual: viven en los métodos de las entidades y se refuerzan en la BD
   intercambiable (`SimulatedPaymentGateway`). Pasar a una pasarela real consiste en añadir otro adaptador,
   sin tocar `PaymentProcessor`.
 - **Los adaptadores de entrada** (controladores en `web`, listeners en `messaging`) solo traducen HTTP o
-  AMQP y delegan. Añadir otra forma de entrada, como un servidor MCP, reutilizaría los mismos casos de uso.
+  AMQP y delegan. Así se añadió el servidor MCP: `catalog.mcp` y `enrollment.mcp` son otro adaptador de
+  entrada sobre los mismos casos de uso, sin cambiar ninguno.
 - **El contrato de eventos** (`messaging.events`) es independiente de las entidades, así que el formato
   publicado no cambia al refactorizar el modelo interno.
 
@@ -678,6 +681,98 @@ Tras agotar los reintentos, ese mensaje se mueve a la DLQ en vez de bloquear la 
 resuelve "este mensaje ya lo procesé, no lo proceses otra vez"; la DLQ resuelve "este mensaje no se puede
 procesar, sácalo de la cola". Son mecanismos independientes y complementarios.
 
+## Integración MCP
+
+La aplicación es también un servidor MCP (Model Context Protocol). Un asistente de IA puede consultar el
+catálogo, inscribir estudiantes o seguir una inscripción usando la lógica real de la aplicación, con los
+mismos permisos que su token.
+
+**Dependencia:** `org.springframework.ai:spring-ai-starter-mcp-server-webmvc`, el starter oficial que pide
+el enunciado, en Spring AI 2.0.1 (compatible con Spring Boot 4). Las tools son métodos anotados con
+`@McpTool` y `@McpToolParam` en `catalog.mcp.CatalogTools` y `enrollment.mcp.EnrollmentTools`.
+
+**Cómo está hecho:**
+
+- **Es un adaptador de entrada más, como los controladores.** Cada tool valida su entrada con Jakarta
+  Validation, aplica la misma regla `@PreAuthorize` que su endpoint REST y delega en el mismo caso de uso.
+  No hay lógica ni datos propios del MCP.
+- **Mismo token, mismos permisos.** `/mcp` está protegido por la cadena de seguridad de la API: sin
+  `Authorization: Bearer` responde 401, y cada tool se ejecuta con los permisos de ese token. Por ejemplo, un
+  STUDENT no puede usar `create_category` y solo ve cursos `PUBLISHED`.
+- **Sin estado (`protocol: STATELESS`).** Cada llamada es una petición HTTP independiente, como en la API
+  REST: cualquier instancia puede atenderla y no hay sesión MCP que guardar. Además, así la tool se ejecuta
+  en el hilo de la petición, con su contexto de seguridad.
+- **Errores sin detalles internos.** `McpToolErrors` es el equivalente de `GlobalExceptionHandler`: el
+  cliente solo recibe mensajes escritos por la aplicación (`Course … not found`,
+  `Invalid arguments: progress must be less than or equal to 100`). Cualquier error inesperado llega como
+  `An unexpected error occurred` y se registra en el log.
+
+**Tools disponibles.** Los parámetros marcados con `?` son opcionales. En los listados, `page` empieza en 0
+y `size` va de 1 a 100 (20 por defecto).
+
+| Tool | Qué hace | Parámetros | Quién puede usarla |
+|---|---|---|---|
+| `list_categories` | Lista las categorías por orden alfabético | `page?`, `size?` | cualquier usuario |
+| `get_category` | Devuelve una categoría | `categoryId` | cualquier usuario |
+| `create_category` | Crea una categoría (nombre único) | `name`, `description?` | ADMIN |
+| `list_courses` | Lista los cursos, del más reciente al más antiguo | `page?`, `size?` | cualquier usuario (un STUDENT solo ve `PUBLISHED`) |
+| `search_courses` | Busca cursos con filtros combinables | `categoryId?`, `level?`, `minPrice?`, `maxPrice?`, `title?`, `withAvailableSeats?`, `status?`, `page?`, `size?` | cualquier usuario (un STUDENT solo ve `PUBLISHED`) |
+| `get_course` | Devuelve un curso con sus plazas libres | `courseId` | cualquier usuario (un STUDENT solo ve `PUBLISHED`) |
+| `create_course` | Crea un curso en `DRAFT` | `title`, `description?`, `durationHours`, `level`, `price`, `capacity`, `categoryId`, `instructorId` | ADMIN, o el INSTRUCTOR que lo imparte |
+| `publish_course` | Publica un curso `DRAFT` | `courseId` | ADMIN o el instructor del curso |
+| `archive_course` | Archiva un curso: deja de aceptar inscripciones | `courseId` | ADMIN o el instructor del curso |
+| `list_students` | Lista los estudiantes | `page?`, `size?` | ADMIN |
+| `get_student` | Devuelve un estudiante | `studentId` | ADMIN o el propio estudiante |
+| `enroll_student` | Inscribe al estudiante del token: reserva plaza y crea el pago, y devuelve `PENDING_PAYMENT` | `courseId`, `idempotencyKey` | STUDENT |
+| `get_enrollment` | Devuelve el estado y el progreso de una inscripción | `enrollmentId` | ADMIN, su estudiante o el instructor del curso |
+| `update_enrollment_progress` | Fija el progreso (0-100). Al llegar a 100 la inscripción se completa y se emite el certificado | `enrollmentId`, `progress` | ADMIN o su estudiante |
+| `cancel_enrollment` | Cancela una inscripción y libera su plaza | `enrollmentId` | ADMIN o su estudiante |
+| `list_students_by_course` | Lista los estudiantes inscritos en un curso | `courseId`, `page?`, `size?` | ADMIN o el instructor del curso |
+| `list_courses_by_student` | Lista los cursos de un estudiante | `studentId`, `page?`, `size?` | ADMIN o el propio estudiante |
+
+- `idempotencyKey` es obligatoria en `enroll_student` por la misma razón que la cabecera `Idempotency-Key`
+  en REST: un agente que reintenta tras un *timeout* recibe la inscripción original en lugar de ocupar otra
+  plaza.
+- Cada tool declara las *hints* de MCP que le corresponden (`readOnlyHint` en las consultas,
+  `idempotentHint`, `destructiveHint`). Los clientes las usan para decidir cuándo pedir confirmación.
+
+**Cómo probarlo.** Con la aplicación arrancada (Compose o `./mvnw spring-boot:run`), obtén un token con las
+credenciales de tu `.env`:
+
+```bash
+TOKEN=$(curl -s localhost:8080/api/auth/token -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" | jq -r .accessToken)
+```
+
+- **MCP Inspector:** `npx @modelcontextprotocol/inspector` y abre <http://localhost:6274>. Elige el
+  transporte *Streamable HTTP* con la URL `http://localhost:8080/mcp`, y añade la cabecera
+  `Authorization: Bearer <token>` en la configuración de autenticación. *List Tools* muestra las 17 tools con
+  sus parámetros, y cada una se puede ejecutar desde un formulario. En el devcontainer, el puerto 6274 ya se
+  reenvía.
+- **MCPJam:** `npx @mcpjam/inspector@latest`, con la misma URL y la misma cabecera.
+- **curl:** al no tener estado, cada llamada es una petición JSON-RPC:
+
+  ```bash
+  curl -s localhost:8080/mcp -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+    -H 'Accept: application/json, text/event-stream' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_courses","arguments":{"title":"spring"}}}'
+  ```
+
+- **Claude Code:** `claude mcp add --transport http courses http://localhost:8080/mcp --header "Authorization: Bearer $TOKEN"`.
+
+`McpServerTest` recorre todo esto con el cliente oficial del SDK de MCP, sobre HTTP real:
+
+- la lista de tools;
+- el flujo completo: crear categoría y curso, publicar, buscar, inscribirse, reintentar con la misma clave y
+  ver la activación asíncrona por RabbitMQ;
+- los permisos;
+- la validación y los mensajes de error;
+- el 401 sin token.
+
+Comprobado también en el stack de Compose con `curl`: 17 tools, `search_courses` devuelve los cursos reales,
+`create_category` como STUDENT responde `You are not allowed to perform this operation` y sin token la
+respuesta es 401.
+
 ## Rendimiento: virtual threads y caché
 
 ### Virtual threads
@@ -771,11 +866,10 @@ invalidaciones no cambian.
 
 ## Tests
 
-`./mvnw test` ejecuta los 109 tests en unos 35 segundos. Casi todos los de integración comparten un único
+`./mvnw test` ejecuta los 116 tests en unos 40 segundos. Casi todos los de integración comparten un único
 contexto de Spring y un único par de contenedores (`AbstractIntegrationTest`), por eso la suite es rápida pese
-a usar PostgreSQL y RabbitMQ reales. Las excepciones son `ManagementPortTest`, que necesita servidores reales
-en dos puertos distintos, y `VirtualThreadsTest`, que reutiliza ese mismo contexto porque necesita el Tomcat
-real.
+a usar PostgreSQL y RabbitMQ reales. La excepción es `@RealServerTest`, con servidores reales en puertos reales, que comparten
+`ManagementPortTest`, `VirtualThreadsTest` y `McpServerTest`.
 
 | Nivel | Qué cubre | Clases |
 |---|---|---|
@@ -789,9 +883,10 @@ real.
 | **Observabilidad** | `correlationId` propagado de la petición HTTP al consumidor a través de RabbitMQ, ids no seguros sustituidos, contadores por resultado, *gauges* de DLQ y de outbox `FAILED` | `ObservabilityTest` |
 | **Caché** | Lecturas servidas desde la caché, invalidación en cada escritura (plazas incluidas), permisos aplicados también en los aciertos, métricas | `CatalogCacheTest` |
 | **Paginación por cursor** | Recorrido completo sin repetir ni saltar cursos, curso creado a mitad del recorrido, solo `PUBLISHED` para estudiantes, cursor inválido, tamaño máximo | `CursorPaginationTest` |
+| **MCP** | Las 17 tools con descripción y parámetros; flujo completo de inscripción a través de tools con reintento idempotente y activación asíncrona; mismos permisos que la API; validación; errores sin detalles internos; 401 sin token | `McpServerTest`, `McpToolErrorsTest` |
 | **Contrato** | Campos del JSON de los eventos publicados | `EventContractTest` |
 
-Para comprobar que los tests no pasan por casualidad, quité a propósito cinco protecciones y confirmé que los
+Para comprobar que los tests no pasan por casualidad, quité a propósito seis protecciones y confirmé que los
 tests fallaban:
 
 - sin el `@EntityGraph`, `QueryEfficiencyTest` detecta el N+1;
@@ -801,7 +896,9 @@ tests fallaban:
   consumidor;
 - con `spring.threads.virtual.enabled=false`, fallan los tres tests de `VirtualThreadsTest`;
 - sin el `@CacheEvict` de `tryReserveSeat`/`releaseSeat`, `CatalogCacheTest` detecta que el curso sigue
-  mostrando 2 plazas libres después de una inscripción.
+  mostrando 2 plazas libres después de una inscripción;
+- sin el `@PreAuthorize` de `create_category`, `McpServerTest` detecta que un estudiante puede crear
+  categorías.
 
 ## Integración continua
 
@@ -810,7 +907,7 @@ paralelo:
 
 | Job | Qué hace |
 |---|---|
-| Build and test | `./mvnw -B verify` con Java 21 (Temurin): compila y ejecuta los 109 tests. Los de integración usan el Docker que ya traen los runners `ubuntu-latest`, así que Testcontainers funciona sin configuración. Si algo falla, sube los informes de Surefire como artefacto. |
+| Build and test | `./mvnw -B verify` con Java 21 (Temurin): compila y ejecuta los 116 tests. Los de integración usan el Docker que ya traen los runners `ubuntu-latest`, así que Testcontainers funciona sin configuración. Si algo falla, sube los informes de Surefire como artefacto. |
 | Docker image and deployment config | Construye la imagen del `Dockerfile`, valida `docker-compose.yml` con `.env.example` y valida la configuración y las alertas de Prometheus con `promtool`. |
 
 - Reutiliza las dependencias de Maven entre ejecuciones (caché de `setup-java`), tiene permisos de solo

@@ -1,12 +1,9 @@
 package com.example.courses.web;
 
-import com.example.courses.TestcontainersConfiguration;
+import com.example.courses.support.RealServerTest;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.micrometer.metrics.test.autoconfigure.AutoConfigureMetrics;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalManagementPort;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.context.annotation.Import;
 
 import java.io.IOException;
 import java.net.URI;
@@ -16,16 +13,8 @@ import java.net.http.HttpResponse;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Needs real, separate ports, so unlike the other web tests it starts actual servers instead of MockMvc.
- * {@code @AutoConfigureMetrics} re-enables the Prometheus registry, which Spring Boot disables in tests.
- */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-        "management.server.port=0",
-        "app.jwt.secret=test-only-secret-at-least-32-bytes-long!"
-})
-@AutoConfigureMetrics
-@Import(TestcontainersConfiguration.class)
+/** Needs real, separate ports, so unlike the other web tests it starts actual servers instead of MockMvc. */
+@RealServerTest
 class ManagementPortTest {
 
     private final HttpClient http = HttpClient.newHttpClient();
