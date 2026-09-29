@@ -39,6 +39,13 @@ services:
       # Used by the Postgres MCP server (see /.mcp.json).
       DATABASE_URI: postgresql://${POSTGRES_USER:-courses}:${POSTGRES_PASSWORD:-courses}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-courses}
       RABBITMQ_MANAGEMENT_URL: http://${RABBITMQ_HOST:-rabbitmq}:${RABBITMQ_MANAGEMENT_PORT:-15672}
+      # Used by the Redis MCP server: the devcontainer's Redis, where `./mvnw spring-boot:run` keeps its
+      # rate-limit buckets.
+      REDIS_URL: redis://${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/0
+      # Used by the Prometheus and Jaeger MCP servers. Both services only exist while the app's own
+      # `docker compose up` runs inside this container (Docker-in-Docker publishes them on its localhost).
+      PROMETHEUS_URL: ${PROMETHEUS_URL:-http://localhost:9090}
+      JAEGER_MCP_URL: ${JAEGER_MCP_URL:-http://localhost:16686/api/ai/mcp/}
       # Optional MCP credentials: read from the host shell or the git-ignored .devcontainer/.env.
       GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN:-}
       CONTEXT7_API_KEY: ${CONTEXT7_API_KEY:-}

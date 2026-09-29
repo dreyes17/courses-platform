@@ -10,13 +10,16 @@ RUN rm -f /etc/apt/sources.list.d/yarn.list \
     && apt-get install -y --no-install-recommends postgresql-client jq httpie netcat-openbsd \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# uv / uvx: runs the Python-based MCP servers (Postgres MCP Pro, RabbitMQ MCP).
+# uv / uvx: runs the Python-based MCP servers (Postgres MCP Pro, RabbitMQ, Redis, Prometheus).
 COPY --from=ghcr.io/astral-sh/uv:0.8 /uv /uvx /usr/local/bin/
 
 # Pre-warm the uv cache so the MCP servers start instantly the first time.
-# Keep these versions in sync with /.mcp.json.
+# Keep these versions in sync with /.mcp.json. (The Prometheus one exits at once without PROMETHEUS_URL;
+# installing it is all that matters here.)
 USER vscode
 RUN uvx --from postgres-mcp==0.3.0 --with "mcp<2" postgres-mcp --help >/dev/null \
     && uvx --from amq-mcp-server-rabbitmq==4.0.0 amq-mcp-server-rabbitmq --help >/dev/null \
+    && uvx --from redis-mcp-server==0.5.1 redis-mcp-server --help >/dev/null \
+    && (uvx --from prometheus-mcp-server==1.6.2 prometheus-mcp-server >/dev/null 2>&1 || true) \
     || true
 USER root

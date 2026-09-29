@@ -3,7 +3,10 @@
     "context7": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp@4.1.1"],
+      "args": [
+        "-y",
+        "@upstash/context7-mcp@4.1.1"
+      ],
       "env": {
         "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY:-}"
       }
@@ -11,7 +14,14 @@
     "postgres": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["--from", "postgres-mcp==0.3.0", "--with", "mcp<2", "postgres-mcp", "--access-mode=unrestricted"],
+      "args": [
+        "--from",
+        "postgres-mcp==0.3.0",
+        "--with",
+        "mcp<2",
+        "postgres-mcp",
+        "--access-mode=unrestricted"
+      ],
       "env": {
         "DATABASE_URI": "${DATABASE_URI:-postgresql://courses:courses@localhost:5432/courses}"
       }
@@ -19,7 +29,13 @@
     "rabbitmq": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["--from", "amq-mcp-server-rabbitmq==4.0.0", "amq-mcp-server-rabbitmq", "--v4", "--allow-mutative-tools"]
+      "args": [
+        "--from",
+        "amq-mcp-server-rabbitmq==4.0.0",
+        "amq-mcp-server-rabbitmq",
+        "--v4",
+        "--allow-mutative-tools"
+      ]
     },
     "github": {
       "type": "http",
@@ -27,6 +43,33 @@
       "headers": {
         "Authorization": "Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN:-}"
       }
+    },
+    "redis": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "redis-mcp-server==0.5.1",
+        "redis-mcp-server",
+        "--url",
+        "${REDIS_URL:-redis://localhost:6379/0}"
+      ]
+    },
+    "prometheus": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "prometheus-mcp-server==1.6.2",
+        "prometheus-mcp-server"
+      ],
+      "env": {
+        "PROMETHEUS_URL": "${PROMETHEUS_URL:-http://localhost:9090}"
+      }
+    },
+    "jaeger": {
+      "type": "http",
+      "url": "${JAEGER_MCP_URL:-http://localhost:16686/api/ai/mcp/}"
     }
   }
 }

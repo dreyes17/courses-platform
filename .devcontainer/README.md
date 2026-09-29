@@ -107,6 +107,8 @@ Compose builds these from the values above. You don't set them yourself.
 | `DATABASE_URI` | `postgresql://courses:courses@postgres:5432/courses` | `postgres` MCP server |
 | `RABBITMQ_MANAGEMENT_URL` | `http://rabbitmq:15672` | Reference for tools and scripts |
 | `GITHUB_PERSONAL_ACCESS_TOKEN`, `CONTEXT7_API_KEY` | from `.env` | MCP servers |
+| `REDIS_URL` | `redis://redis:6379/0` | `redis` MCP server |
+| `PROMETHEUS_URL`, `JAEGER_MCP_URL` | `http://localhost:9090`, `http://localhost:16686/api/ai/mcp/` | `prometheus` and `jaeger` MCP servers |
 
 Because of these variables, `./mvnw spring-boot:run` connects to the services with no extra config. Keep
 `application.yml` portable by reading the same variables with local defaults, for example
@@ -124,6 +126,9 @@ starts. `.claude/settings.local.json` (git-ignored) pre-approves them.
 | `postgres` | `uvx postgres-mcp` (Postgres MCP Pro) | Inspect the schema Flyway created, run SQL, `EXPLAIN` queries to find N+1 queries and missing indexes, check DB health | `DATABASE_URI` (already set) |
 | `rabbitmq` | `uvx amq-mcp-server-rabbitmq` | List exchanges, queues and bindings, see what is in the DLQ, publish test or poison messages, check consumers | Connect at the start of a session (see below) |
 | `github` | Remote HTTP (`api.githubcopilot.com/mcp`) | Create the repo, open PRs, check GitHub Actions runs (CI bonus) | `GITHUB_PERSONAL_ACCESS_TOKEN` |
+| `redis` | `uvx redis-mcp-server` (official, Redis) | Inspect the rate-limit buckets (`rate-limit:<rule>:<ip\|user>:<id>`), their TTL, and delete one to reset a client's budget while testing | `REDIS_URL` (already set: the devcontainer's Redis) |
+| `prometheus` | `uvx prometheus-mcp-server` | PromQL queries and scrape targets: check the business, cache, DLQ, outbox and rate-limit metrics after generating traffic | `PROMETHEUS_URL` (already set). Only while the app's `docker compose up` runs |
+| `jaeger` | Remote HTTP, built into Jaeger 2 (`/api/ai/mcp/`) | Find traces and read their topology and critical path, e.g. confirm an enrollment crosses outbox → RabbitMQ → consumers as one trace | `JAEGER_MCP_URL` (already set). Only while the app's `docker compose up` runs |
 
 ### Context7 docs cache and rate limits
 
@@ -159,6 +164,15 @@ repository, with these permissions:
 
 Put it in `.env` and rebuild. Without it, the `github` server shows as failed in `/mcp`; the other servers are not
 affected. If a token is ever committed, revoke it on GitHub: deleting it in a later commit leaves it in the history.
+
+### Which Redis, Prometheus and Jaeger the MCP servers see
+
+- **Redis:** the devcontainer's own Redis, which `./mvnw spring-boot:run` uses for its rate-limit buckets. The
+  Redis of the app's `docker compose` stack is password-protected and not published outside its network.
+  A bucket's key expires once it has refilled (seconds to minutes), so inspect it right after the requests.
+- **Prometheus and Jaeger** exist only while the app's own `docker compose up` runs inside the devcontainer;
+  Docker-in-Docker publishes them on the container's `localhost:9090` and `localhost:16686`. At any other
+  time these two servers show as failed in `/mcp`, which is harmless.
 
 ### Connecting the RabbitMQ MCP
 

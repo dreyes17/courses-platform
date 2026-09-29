@@ -77,8 +77,9 @@ necesario ya instalado, configurado y arrancado.
 - **Variables de entorno:** las `SPRING_*` que la aplicación necesita para conectarse a esos servicios, más
   valores de desarrollo para `JWT_SECRET` y `ADMIN_EMAIL`/`ADMIN_PASSWORD`.
 - **Imágenes precargadas:** las de Testcontainers, descargadas en la primera creación.
-- **Servidores MCP para asistentes de IA:** documentación actualizada de las librerías, inspección de la BD
-  y del broker, y GitHub. Detalle en [`.devcontainer/README.md`](.devcontainer/README.md).
+- **Servidores MCP para asistentes de IA:** documentación actualizada de las librerías; inspección de la BD,
+  del broker y de los buckets de rate limiting en Redis; consultas a Prometheus y a las trazas de Jaeger; y
+  GitHub. Detalle en [`.devcontainer/README.md`](.devcontainer/README.md).
 
 **Por qué conviene**
 
