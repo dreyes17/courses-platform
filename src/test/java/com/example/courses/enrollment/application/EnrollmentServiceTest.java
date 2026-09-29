@@ -73,7 +73,8 @@ class EnrollmentServiceTest {
     @BeforeEach
     void setUp() {
         service = new EnrollmentService(students, courses, enrollments, payments, outbox, idempotentRequests,
-                JsonMapper.builder().build(), new BusinessMetrics(meterRegistry), "EUR");
+                JsonMapper.builder().build(), new BusinessMetrics(meterRegistry), new EnrollmentViewMapperImpl(),
+                "EUR");
     }
 
     @Test

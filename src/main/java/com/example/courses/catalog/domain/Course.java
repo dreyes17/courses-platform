@@ -150,7 +150,11 @@ public class Course extends BaseEntity {
     }
 
     public boolean hasAvailableSeats() {
-        return seatsTaken < capacity;
+        return getAvailableSeats() > 0;
+    }
+
+    public int getAvailableSeats() {
+        return capacity - seatsTaken;
     }
 
     public String getTitle() {

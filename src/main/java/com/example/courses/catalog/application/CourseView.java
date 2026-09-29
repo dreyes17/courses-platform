@@ -1,6 +1,5 @@
 package com.example.courses.catalog.application;
 
-import com.example.courses.catalog.domain.Course;
 import com.example.courses.catalog.domain.CourseLevel;
 import com.example.courses.catalog.domain.CourseStatus;
 
@@ -25,12 +24,4 @@ public record CourseView(
         String instructorName,
         Instant createdAt
 ) {
-
-    static CourseView from(Course course) {
-        return new CourseView(course.getId(), course.getTitle(), course.getDescription(), course.getDurationHours(),
-                course.getLevel(), course.getPrice(), course.getCapacity(), course.getSeatsTaken(),
-                course.getCapacity() - course.getSeatsTaken(), course.getStatus(),
-                course.getCategory().getId(), course.getCategory().getName(),
-                course.getInstructor().getId(), course.getInstructor().getName(), course.getCreatedAt());
-    }
 }

@@ -22,11 +22,14 @@ public class CourseService {
     private final CourseRepository courses;
     private final CategoryRepository categories;
     private final InstructorRepository instructors;
+    private final CatalogViewMapper mapper;
 
-    public CourseService(CourseRepository courses, CategoryRepository categories, InstructorRepository instructors) {
+    public CourseService(CourseRepository courses, CategoryRepository categories, InstructorRepository instructors,
+                         CatalogViewMapper mapper) {
         this.courses = courses;
         this.categories = categories;
         this.instructors = instructors;
+        this.mapper = mapper;
     }
 
     @Transactional
@@ -37,7 +40,7 @@ public class CourseService {
                 .orElseThrow(() -> new ResourceNotFoundException("Instructor", instructorId));
         Course course = Course.draft(terms.title(), terms.description(), terms.durationHours(), terms.level(),
                 terms.price(), terms.capacity(), category, instructor);
-        return CourseView.from(courses.save(course));
+        return mapper.toView(courses.save(course));
     }
 
     @Transactional
@@ -45,21 +48,21 @@ public class CourseService {
         Course course = find(id);
         course.updateDetails(terms.title(), terms.description(), terms.durationHours(), terms.level(),
                 terms.price(), terms.capacity());
-        return CourseView.from(course);
+        return mapper.toView(course);
     }
 
     @Transactional
     public CourseView publish(UUID id) {
         Course course = find(id);
         course.publish();
-        return CourseView.from(course);
+        return mapper.toView(course);
     }
 
     @Transactional
     public CourseView archive(UUID id) {
         Course course = find(id);
         course.archive();
-        return CourseView.from(course);
+        return mapper.toView(course);
     }
 
     @Transactional
@@ -76,7 +79,7 @@ public class CourseService {
         if (publishedOnly && course.getStatus() != CourseStatus.PUBLISHED) {
             throw new ResourceNotFoundException("Course", id);
         }
-        return CourseView.from(course);
+        return mapper.toView(course);
     }
 
     @Transactional(readOnly = true)
@@ -85,7 +88,7 @@ public class CourseService {
         var specification = CourseSpecifications.matching(criteria.categoryId(), criteria.level(),
                 criteria.minPrice(), criteria.maxPrice(), criteria.title(), criteria.withAvailableSeats(),
                 status);
-        return courses.findAll(specification, pageable).map(CourseView::from);
+        return courses.findAll(specification, pageable).map(mapper::toView);
     }
 
     private Course find(UUID id) {

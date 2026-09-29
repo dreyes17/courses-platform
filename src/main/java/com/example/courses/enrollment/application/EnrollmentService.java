@@ -46,11 +46,12 @@ public class EnrollmentService {
     private final IdempotentRequests idempotentRequests;
     private final JsonMapper jsonMapper;
     private final BusinessMetrics metrics;
+    private final EnrollmentViewMapper mapper;
     private final String currency;
 
     public EnrollmentService(StudentRepository students, CourseRepository courses, EnrollmentRepository enrollments,
                              PaymentRepository payments, OutboxRecorder outbox, IdempotentRequests idempotentRequests,
-                             JsonMapper jsonMapper, BusinessMetrics metrics,
+                             JsonMapper jsonMapper, BusinessMetrics metrics, EnrollmentViewMapper mapper,
                              @Value("${app.payments.currency:EUR}") String currency) {
         this.students = students;
         this.courses = courses;
@@ -60,6 +61,7 @@ public class EnrollmentService {
         this.idempotentRequests = idempotentRequests;
         this.jsonMapper = jsonMapper;
         this.metrics = metrics;
+        this.mapper = mapper;
         this.currency = currency;
     }
 
@@ -86,21 +88,21 @@ public class EnrollmentService {
             outbox.record(new EnrollmentCompleted(enrollment.getId(), enrollment.getStudent().getId(),
                     enrollment.getCourse().getId(), enrollment.getCompletedAt()));
         }
-        return EnrollmentView.from(enrollment);
+        return mapper.toView(enrollment);
     }
 
     @Transactional
     public EnrollmentView cancel(UUID enrollmentId) {
         Enrollment enrollment = findEnrollment(enrollmentId);
         enrollment.cancel();
-        EnrollmentView view = EnrollmentView.from(enrollment);
+        EnrollmentView view = mapper.toView(enrollment);
         courses.releaseSeat(view.courseId());
         return view;
     }
 
     @Transactional(readOnly = true)
     public EnrollmentView get(UUID enrollmentId) {
-        return EnrollmentView.from(findEnrollment(enrollmentId));
+        return mapper.toView(findEnrollment(enrollmentId));
     }
 
     @Transactional(readOnly = true)
@@ -108,7 +110,7 @@ public class EnrollmentService {
         if (!courses.existsById(courseId)) {
             throw new ResourceNotFoundException("Course", courseId);
         }
-        return enrollments.findByCourseId(courseId, pageable).map(CourseEnrollmentView::from);
+        return enrollments.findByCourseId(courseId, pageable).map(mapper::toCourseEnrollmentView);
     }
 
     @Transactional(readOnly = true)
@@ -116,7 +118,7 @@ public class EnrollmentService {
         if (!students.existsById(studentId)) {
             throw new ResourceNotFoundException("Student", studentId);
         }
-        return enrollments.findByStudentId(studentId, pageable).map(StudentEnrollmentView::from);
+        return enrollments.findByStudentId(studentId, pageable).map(mapper::toStudentEnrollmentView);
     }
 
     private EnrollmentView enrollNow(UUID studentId, UUID courseId) {
@@ -153,7 +155,7 @@ public class EnrollmentService {
                 enrollment, course.getPrice(), currency, "enrollment-" + enrollment.getId()));
         outbox.record(new EnrollmentCreated(enrollment.getId(), studentId, courseId, payment.getId(),
                 payment.getAmount(), payment.getCurrency(), Instant.now()));
-        return EnrollmentView.from(enrollment);
+        return mapper.toView(enrollment);
     }
 
     /** The partial unique index is the backstop for two concurrent enrollments of the same student. */

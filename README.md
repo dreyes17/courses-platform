@@ -155,7 +155,7 @@ entrada, delegan en `application` y traducen el resultado.
 | `messaging.config` | Topología RabbitMQ declarada por código |
 | `idempotency` | Idempotencia a nivel HTTP para la cabecera `Idempotency-Key` |
 | `identity` | Cuentas de usuario (`users`), registro de estudiantes, alta de instructores, login y emisión de JWT |
-| `shared` | `BaseEntity`, jerarquía de excepciones de dominio, `GlobalExceptionHandler` (errores RFC 9457), `PageResponse`, OpenAPI y `shared.security` (filtros, JWT, reglas de acceso) |
+| `shared` | `BaseEntity`, jerarquía de excepciones de dominio, `GlobalExceptionHandler` (errores RFC 9457), `PageResponse`, `MappingConfig` (MapStruct), OpenAPI y `shared.security` (filtros, JWT, reglas de acceso) |
 
 ### Separación de responsabilidades (punto 6 del enunciado)
 
@@ -164,7 +164,7 @@ entrada, delegan en `application` y traducen el resultado.
 | Controladores REST finos | `<contexto>.web` (`CourseController`, `EnrollmentController`...) | Validan la entrada con Jakarta Validation, aplican `@PreAuthorize`, delegan en `application` y traducen a HTTP (`201` + `Location`, `204`...). No contienen reglas de negocio. |
 | Servicios / casos de uso | `<contexto>.application` (`EnrollmentService`, `CourseService`, `PaymentProcessor`...) | Coordinan el caso de uso y son dueños de las transacciones (`@Transactional`). Las reglas de estado viven en las entidades. |
 | Repositorios | `<contexto>.repository` | Spring Data JPA, más las consultas que requieren cuidado: el `UPDATE` atómico de plazas, `@EntityGraph` contra el N+1 y `Specification` para la búsqueda. |
-| Entidades de dominio separadas de los DTOs | Entidades en `<contexto>.domain`; DTOs de entrada como `record` en `web` (`CatalogRequests`, `EnrollRequest`...); DTOs de salida como vistas `record` en `application` (`CourseView`, `EnrollmentView`...) | Ningún endpoint recibe ni devuelve una entidad JPA. |
+| Entidades de dominio separadas de los DTOs | Entidades en `<contexto>.domain`; DTOs de entrada como `record` en `web` (`CatalogRequests`, `EnrollRequest`...); DTOs de salida como vistas `record` en `application` (`CourseView`, `EnrollmentView`...) | Ningún endpoint recibe ni devuelve una entidad JPA. Las vistas las construyen mappers generados por MapStruct (ver [Mapeo entidad → vista](#mapeo-entidad--vista-mapstruct)). |
 | Adaptadores de mensajería aislados del dominio | Listeners en `<contexto>.messaging`; infraestructura común en `messaging` (`outbox`, `inbox`, `config`, `events`) | Cada listener solo lee el mensaje y delega en `application`. Los eventos son `record` propios, independientes de las entidades. |
 | Manejo de errores centralizado | `shared.web.GlobalExceptionHandler`, apoyado en `shared.security.ProblemDetailsSecurityHandler` y en la jerarquía de `shared.domain` | Un único `@RestControllerAdvice` traduce cualquier excepción de un controlador a `problem+json`. Los 401/403 que corta la cadena de filtros, antes de llegar al controlador, salen con el mismo formato. El código HTTP lo decide el tipo de excepción (`ConflictException` → 409, `BusinessRuleViolationException` → 422). |
 
@@ -205,6 +205,25 @@ hacia `application` contexto a contexto, sin rehacer lo demás.
 Las entidades son modelos ricos: los cambios de estado válidos viven como métodos en la propia entidad
 (`Course.publish()`, `Enrollment.cancel()`, `Payment.confirm()`, ...) y lanzan una excepción de dominio
 específica ante una transición inválida, en vez de exponer setters y dejar la validación a quien la llame.
+
+### Mapeo entidad → vista (MapStruct)
+
+Cada contexto tiene un mapper, `CatalogViewMapper` y `EnrollmentViewMapper`, que convierte las entidades en
+las vistas `record` que devuelven los casos de uso. MapStruct genera su implementación al compilar: es código
+Java normal, sin reflexión en ejecución, y se puede leer en `target/generated-sources/annotations`.
+
+- **Solo en un sentido: entidad → vista.** Las entidades se crean y se modifican con sus métodos de dominio
+  (`Course.draft(...)`, `course.updateDetails(...)`), que protegen sus invariantes. Un mapper DTO → entidad
+  se las saltaría rellenando campos directamente, así que no existe.
+- **Un campo sin origen no compila.** `MappingConfig` fija `unmappedTargetPolicy = ERROR`: si se añade un
+  campo a una vista y el mapper no sabe de dónde sale, falla la compilación, en lugar de aparecer un `null`
+  en la API.
+- **Lo que el compilador no ve lo cubren tests:** que `categoryId` salga de la categoría y no del
+  instructor, o que `availableSeats` sea `capacity - seatsTaken`. Son `CatalogViewMapperTest` y
+  `EnrollmentViewMapperTest`, sin Spring.
+- `availableSeats` se declara con una expresión explícita. Sin ella, MapStruct interpretaría
+  `Course.hasAvailableSeats()` como una comprobación de presencia del campo (convención `hasX`). El
+  resultado sería el mismo, pero por casualidad.
 
 El esquema de base de datos vive en `src/main/resources/db/migration` (Flyway, `ddl-auto: validate`) y
 replica en la propia BD las invariantes críticas: `courses` tiene `CHECK (seats_taken <= capacity)`, y
@@ -600,7 +619,7 @@ procesar, sácalo de la cola". Son mecanismos independientes y complementarios.
 
 ## Tests
 
-`./mvnw test` ejecuta los 91 tests en unos 30 segundos. Casi todos los de integración comparten un único
+`./mvnw test` ejecuta los 95 tests en unos 30 segundos. Casi todos los de integración comparten un único
 contexto de Spring y un único par de contenedores (`AbstractIntegrationTest`), por eso la suite es rápida pese
 a usar PostgreSQL y RabbitMQ reales. La excepción es `ManagementPortTest`, que necesita servidores reales en
 dos puertos distintos.
@@ -609,6 +628,7 @@ dos puertos distintos.
 |---|---|---|
 | **Unitarios de dominio** | Máquinas de estado e invariantes de `Course` y `Enrollment`, sin Spring ni mocks | `CourseTest`, `EnrollmentTest` |
 | **Unitarios de casos de uso** (Mockito) | Ramas de error y lo que *no* debe ocurrir: no consumir plaza si ya está inscrito, no cobrar una inscripción cancelada, no reactivar una cancelada, no emitir un segundo certificado, entregas duplicadas sin efectos, login que no revela qué emails existen | `EnrollmentServiceTest`, `PaymentProcessorTest`, `PaymentOutcomeHandlerTest`, `CertificateIssuerTest`, `IdempotentRequestsTest`, `AccountServiceTest` |
+| **Unitarios de mapeo** | Que cada campo anidado o derivado de las vistas sale de su origen correcto | `CatalogViewMapperTest`, `EnrollmentViewMapperTest` |
 | **Integración** (Testcontainers) | Concurrencia sobre el aforo (20 hilos, 3 plazas), flujo completo por RabbitMQ, idempotencia de consumidores con entregas duplicadas, mensaje envenenado → DLQ, `Idempotency-Key` | `EnrollmentConcurrencyTest`, `EnrollmentFlowTest`, `ConsumerIdempotencyTest` |
 | **HTTP** (MockMvc) | Flujo end-to-end por la API con cada rol, mapeo de errores a `problem+json`, 401/403 y reglas de propiedad, ausencia de N+1 | `EnrollmentApiTest`, `ErrorHandlingApiTest`, `SecurityApiTest`, `QueryEfficiencyTest` |
 | **Puertos reales** | Actuator accesible sin credenciales solo en el puerto de gestión, health y readiness con BD y broker, API protegida y ausente en ese puerto | `ManagementPortTest` |

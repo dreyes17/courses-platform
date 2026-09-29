@@ -18,10 +18,12 @@ public class InstructorService {
 
     private final InstructorRepository instructors;
     private final CourseRepository courses;
+    private final CatalogViewMapper mapper;
 
-    public InstructorService(InstructorRepository instructors, CourseRepository courses) {
+    public InstructorService(InstructorRepository instructors, CourseRepository courses, CatalogViewMapper mapper) {
         this.instructors = instructors;
         this.courses = courses;
+        this.mapper = mapper;
     }
 
     @Transactional
@@ -29,14 +31,14 @@ public class InstructorService {
         if (instructors.existsByEmail(email)) {
             throw new DuplicateResourceException("Instructor", "email", email);
         }
-        return InstructorView.from(instructors.save(Instructor.create(name, email, bio)));
+        return mapper.toView(instructors.save(Instructor.create(name, email, bio)));
     }
 
     @Transactional
     public InstructorView updateProfile(UUID id, String name, String bio) {
         Instructor instructor = find(id);
         instructor.updateProfile(name, bio);
-        return InstructorView.from(instructor);
+        return mapper.toView(instructor);
     }
 
     @Transactional
@@ -50,12 +52,12 @@ public class InstructorService {
 
     @Transactional(readOnly = true)
     public InstructorView get(UUID id) {
-        return InstructorView.from(find(id));
+        return mapper.toView(find(id));
     }
 
     @Transactional(readOnly = true)
     public Page<InstructorView> list(Pageable pageable) {
-        return instructors.findAll(pageable).map(InstructorView::from);
+        return instructors.findAll(pageable).map(mapper::toView);
     }
 
     private Instructor find(UUID id) {

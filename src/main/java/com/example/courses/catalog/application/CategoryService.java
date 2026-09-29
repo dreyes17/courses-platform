@@ -18,10 +18,12 @@ public class CategoryService {
 
     private final CategoryRepository categories;
     private final CourseRepository courses;
+    private final CatalogViewMapper mapper;
 
-    public CategoryService(CategoryRepository categories, CourseRepository courses) {
+    public CategoryService(CategoryRepository categories, CourseRepository courses, CatalogViewMapper mapper) {
         this.categories = categories;
         this.courses = courses;
+        this.mapper = mapper;
     }
 
     @Transactional
@@ -29,7 +31,7 @@ public class CategoryService {
         if (categories.existsByName(name)) {
             throw new DuplicateResourceException("Category", "name", name);
         }
-        return CategoryView.from(categories.save(Category.create(name, description)));
+        return mapper.toView(categories.save(Category.create(name, description)));
     }
 
     @Transactional
@@ -39,21 +41,21 @@ public class CategoryService {
             throw new DuplicateResourceException("Category", "name", name);
         }
         category.rename(name, description);
-        return CategoryView.from(category);
+        return mapper.toView(category);
     }
 
     @Transactional
     public CategoryView archive(UUID id) {
         Category category = find(id);
         category.archive();
-        return CategoryView.from(category);
+        return mapper.toView(category);
     }
 
     @Transactional
     public CategoryView activate(UUID id) {
         Category category = find(id);
         category.activate();
-        return CategoryView.from(category);
+        return mapper.toView(category);
     }
 
     @Transactional
@@ -67,12 +69,12 @@ public class CategoryService {
 
     @Transactional(readOnly = true)
     public CategoryView get(UUID id) {
-        return CategoryView.from(find(id));
+        return mapper.toView(find(id));
     }
 
     @Transactional(readOnly = true)
     public Page<CategoryView> list(Pageable pageable) {
-        return categories.findAll(pageable).map(CategoryView::from);
+        return categories.findAll(pageable).map(mapper::toView);
     }
 
     private Category find(UUID id) {

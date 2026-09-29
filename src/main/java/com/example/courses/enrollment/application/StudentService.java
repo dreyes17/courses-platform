@@ -15,9 +15,11 @@ import java.util.UUID;
 public class StudentService {
 
     private final StudentRepository students;
+    private final EnrollmentViewMapper mapper;
 
-    public StudentService(StudentRepository students) {
+    public StudentService(StudentRepository students, EnrollmentViewMapper mapper) {
         this.students = students;
+        this.mapper = mapper;
     }
 
     @Transactional
@@ -25,16 +27,16 @@ public class StudentService {
         if (students.existsByEmail(email)) {
             throw new DuplicateResourceException("Student", "email", email);
         }
-        return StudentView.from(students.save(Student.register(firstName, lastName, email)));
+        return mapper.toView(students.save(Student.register(firstName, lastName, email)));
     }
 
     @Transactional(readOnly = true)
     public StudentView get(UUID id) {
-        return StudentView.from(students.findById(id).orElseThrow(() -> new ResourceNotFoundException("Student", id)));
+        return mapper.toView(students.findById(id).orElseThrow(() -> new ResourceNotFoundException("Student", id)));
     }
 
     @Transactional(readOnly = true)
     public Page<StudentView> list(Pageable pageable) {
-        return students.findAll(pageable).map(StudentView::from);
+        return students.findAll(pageable).map(mapper::toView);
     }
 }
