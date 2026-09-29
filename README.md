@@ -1,10 +1,13 @@
 # Courses — plataforma de cursos online orientada a eventos
 
+[![CI](https://github.com/dreyes17/senior-backend-test/actions/workflows/ci.yml/badge.svg)](https://github.com/dreyes17/senior-backend-test/actions/workflows/ci.yml)
+
 Backend para la prueba técnica de Senior Backend Engineer: catálogo de cursos, inscripciones con aforo
 limitado, pagos con confirmación asíncrona y emisión de certificados por eventos, comunicados mediante
 RabbitMQ.
 
-Stack: Java 21 · Spring Boot 4.1 · PostgreSQL · Flyway · Spring AMQP · Spring Security (JWT) · Testcontainers.
+Stack: Java 21 (virtual threads) · Spring Boot 4.1 · PostgreSQL · Flyway · Spring AMQP · Spring Security (JWT) ·
+Caffeine · MapStruct · Testcontainers · Prometheus · GitHub Actions.
 
 ## Arrancar el proyecto
 
@@ -416,6 +419,7 @@ estas métricas de negocio y operación:
 - **Comprobado de extremo a extremo** con el stack de Compose: el target `app:8081` aparece `up`, llegan las
   métricas de negocio y de caché, y las cuatro reglas cargan sin errores. Tras dejar un mensaje en
   `certificates.enrollment-completed.dlq`, `MessagesInDeadLetterQueue` pasó a `firing` al cumplirse el minuto.
+- **El CI valida la configuración y las reglas** con `promtool` (ver [Integración continua](#integración-continua)).
 - Quedan fuera un Alertmanager (a quién avisar y cómo) y los dashboards de Grafana, que corresponden al
   bonus de trazas y dashboards.
 
@@ -764,6 +768,20 @@ tests fallaban:
 - sin el `@CacheEvict` de `tryReserveSeat`/`releaseSeat`, `CatalogCacheTest` detecta que el curso sigue
   mostrando 2 plazas libres después de una inscripción.
 
+## Integración continua
+
+`.github/workflows/ci.yml` se ejecuta en cada push a `main`, en cada *pull request* y a mano. Tiene dos jobs en
+paralelo:
+
+| Job | Qué hace |
+|---|---|
+| Build and test | `./mvnw -B verify` con Java 21 (Temurin): compila y ejecuta los 103 tests. Los de integración usan el Docker que ya traen los runners `ubuntu-latest`, así que Testcontainers funciona sin configuración. Si algo falla, sube los informes de Surefire como artefacto. |
+| Docker image and deployment config | Construye la imagen del `Dockerfile`, valida `docker-compose.yml` con `.env.example` y valida la configuración y las alertas de Prometheus con `promtool`. |
+
+- Reutiliza las dependencias de Maven entre ejecuciones (caché de `setup-java`), tiene permisos de solo
+  lectura y cancela la ejecución anterior de la misma rama cuando llega un push nuevo.
+- El workflow pasa `actionlint` sin avisos, y cada uno de sus pasos se ejecutó en local con el mismo comando.
+
 ## Limitaciones conocidas
 
 - **Pago confirmado de una inscripción ya cancelada.** Si el estudiante cancela mientras el cobro está en
@@ -795,3 +813,5 @@ tests fallaban:
 - [x] Actuator en un puerto de gestión interno: health con BD/RabbitMQ y `/actuator/prometheus` para scraping
 - [x] Observabilidad: métricas de negocio (inscripciones, pagos, certificados, DLQ, outbox), readiness con
       BD/RabbitMQ y logs JSON con `correlationId` propagado a través de RabbitMQ
+- [x] Bonus: virtual threads (medido: sin *pinning*), Prometheus con alertas en Compose, CI con GitHub
+      Actions, caché del catálogo con Caffeine y mapeo entidad → vista con MapStruct
