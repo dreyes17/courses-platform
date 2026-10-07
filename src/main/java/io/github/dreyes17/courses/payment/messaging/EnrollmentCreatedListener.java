@@ -1,0 +1,27 @@
+package io.github.dreyes17.courses.payment.messaging;
+
+import io.github.dreyes17.courses.messaging.config.RabbitTopology;
+import io.github.dreyes17.courses.messaging.events.EnrollmentCreated;
+import io.github.dreyes17.courses.messaging.inbox.InboundEventReader;
+import io.github.dreyes17.courses.payment.application.PaymentProcessor;
+import org.springframework.amqp.core.Message;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.stereotype.Component;
+
+@Component
+class EnrollmentCreatedListener {
+
+    private final InboundEventReader reader;
+    private final PaymentProcessor paymentProcessor;
+
+    EnrollmentCreatedListener(InboundEventReader reader, PaymentProcessor paymentProcessor) {
+        this.reader = reader;
+        this.paymentProcessor = paymentProcessor;
+    }
+
+    @RabbitListener(queues = RabbitTopology.PAYMENT_PROCESSING_QUEUE)
+    void onEnrollmentCreated(Message message) {
+        reader.consume(message, EnrollmentCreated.class,
+                event -> paymentProcessor.process(event.eventId(), event.payload()));
+    }
+}

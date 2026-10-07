@@ -8,11 +8,28 @@
 		<version>4.1.1</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
-	<groupId>com.example</groupId>
+	<groupId>io.github.dreyes17</groupId>
 	<artifactId>courses</artifactId>
-	<version>0.0.1-SNAPSHOT</version>
+	<version>1.0.0</version>
 	<name>courses</name>
-	<description>Backend de una plataforma de cursos online orientada a eventos</description>
+	<description>Event-driven backend for an online course platform</description>
+	<url>https://github.com/dreyes17/courses-platform</url>
+	<licenses>
+		<license>
+			<name>MIT License</name>
+			<url>https://opensource.org/license/mit</url>
+		</license>
+	</licenses>
+	<developers>
+		<developer>
+			<name>Daniel Reyes Parrilla</name>
+			<url>https://github.com/dreyes17</url>
+		</developer>
+	</developers>
+	<scm>
+		<connection>scm:git:https://github.com/dreyes17/courses-platform.git</connection>
+		<url>https://github.com/dreyes17/courses-platform</url>
+	</scm>
 	<properties>
 		<java.version>21</java.version>
 		<springdoc-openapi.version>3.1.1</springdoc-openapi.version>
