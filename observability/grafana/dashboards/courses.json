@@ -1,6 +1,6 @@
 {
   "uid": "courses",
-  "title": "Courses — plataforma",
+  "title": "Courses — platform",
   "tags": [
     "courses"
   ],
@@ -16,7 +16,7 @@
     {
       "id": 1,
       "type": "row",
-      "title": "Estado",
+      "title": "Status",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -29,8 +29,8 @@
     {
       "id": 2,
       "type": "stat",
-      "title": "Instancias arriba",
-      "description": "Instancias que Prometheus consigue leer",
+      "title": "Instances up",
+      "description": "Instances Prometheus can scrape",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -85,8 +85,8 @@
     {
       "id": 3,
       "type": "stat",
-      "title": "Mensajes en DLQ",
-      "description": "Mensajes aparcados tras agotar los reintentos; deberían ser 0",
+      "title": "Messages in DLQs",
+      "description": "Messages parked after exhausting their retries; should be 0",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -141,8 +141,8 @@
     {
       "id": 4,
       "type": "stat",
-      "title": "Eventos del outbox FAILED",
-      "description": "Requieren intervención manual",
+      "title": "FAILED outbox events",
+      "description": "Need manual intervention",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -197,8 +197,8 @@
     {
       "id": 5,
       "type": "stat",
-      "title": "Eventos del outbox pendientes",
-      "description": "Retraso de publicación; en reposo, 0",
+      "title": "Pending outbox events",
+      "description": "Publishing lag; 0 when idle",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -253,7 +253,7 @@
     {
       "id": 6,
       "type": "row",
-      "title": "Tráfico HTTP",
+      "title": "HTTP traffic",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -266,7 +266,7 @@
     {
       "id": 7,
       "type": "timeseries",
-      "title": "Peticiones por segundo",
+      "title": "Requests per second",
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -312,7 +312,7 @@
     {
       "id": 8,
       "type": "timeseries",
-      "title": "Latencia p95 por endpoint",
+      "title": "p95 latency by endpoint",
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -359,7 +359,7 @@
       "id": 9,
       "type": "timeseries",
       "title": "Rate limiting (5 min)",
-      "description": "Respuestas 429 por regla, y peticiones que pasaron sin comprobar porque Redis no respondía",
+      "description": "429 responses by rule, and requests that passed unchecked because Redis didn't respond",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -402,7 +402,7 @@
         {
           "refId": "B",
           "expr": "sum(increase(courses_rate_limit_unavailable_total[5m]))",
-          "legendFormat": "sin comprobar (Redis caído)",
+          "legendFormat": "unchecked (Redis down)",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -413,7 +413,7 @@
     {
       "id": 10,
       "type": "row",
-      "title": "Negocio",
+      "title": "Business",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -426,7 +426,7 @@
     {
       "id": 11,
       "type": "timeseries",
-      "title": "Inscripciones (5 min)",
+      "title": "Enrollments (5 min)",
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -472,7 +472,7 @@
     {
       "id": 12,
       "type": "timeseries",
-      "title": "Pagos procesados (5 min)",
+      "title": "Payments processed (5 min)",
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -518,7 +518,7 @@
     {
       "id": 13,
       "type": "timeseries",
-      "title": "Certificados emitidos (5 min)",
+      "title": "Certificates issued (5 min)",
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -553,7 +553,7 @@
         {
           "refId": "A",
           "expr": "sum(increase(courses_certificates_issued_total[5m]))",
-          "legendFormat": "certificados",
+          "legendFormat": "certificates",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -564,7 +564,7 @@
     {
       "id": 14,
       "type": "row",
-      "title": "Mensajería, outbox y caché",
+      "title": "Messaging, outbox and cache",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -577,7 +577,7 @@
     {
       "id": 15,
       "type": "timeseries",
-      "title": "Mensajes en cada DLQ",
+      "title": "Messages in each DLQ",
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -623,7 +623,7 @@
     {
       "id": 16,
       "type": "timeseries",
-      "title": "Outbox por estado",
+      "title": "Outbox by status",
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -669,7 +669,7 @@
     {
       "id": 17,
       "type": "timeseries",
-      "title": "Tasa de aciertos de la caché",
+      "title": "Cache hit rate",
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -715,7 +715,7 @@
     {
       "id": 18,
       "type": "row",
-      "title": "Recursos",
+      "title": "Resources",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -728,8 +728,8 @@
     {
       "id": 19,
       "type": "timeseries",
-      "title": "Conexiones a la BD (Hikari)",
-      "description": "Con virtual threads, el pool de conexiones es el límite real: 'esperando' > 0 de forma sostenida indica saturación",
+      "title": "Database connections (Hikari)",
+      "description": "With virtual threads, the connection pool is the real limit: a sustained 'pending' > 0 signals saturation",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -763,7 +763,7 @@
         {
           "refId": "A",
           "expr": "sum(hikaricp_connections_active)",
-          "legendFormat": "activas",
+          "legendFormat": "active",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -772,7 +772,7 @@
         {
           "refId": "B",
           "expr": "sum(hikaricp_connections_pending)",
-          "legendFormat": "esperando",
+          "legendFormat": "pending",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -781,7 +781,7 @@
         {
           "refId": "C",
           "expr": "sum(hikaricp_connections_max)",
-          "legendFormat": "máximo",
+          "legendFormat": "max",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -792,8 +792,8 @@
     {
       "id": 20,
       "type": "timeseries",
-      "title": "Hilos de la JVM",
-      "description": "Los virtual threads no aparecen aquí: esta cifra se mantiene estable aunque crezca la carga",
+      "title": "JVM threads",
+      "description": "Virtual threads don't show up here: this stays flat even as load grows",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -827,7 +827,7 @@
         {
           "refId": "A",
           "expr": "sum(jvm_threads_live_threads)",
-          "legendFormat": "vivos (de plataforma)",
+          "legendFormat": "live (platform)",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -838,7 +838,7 @@
     {
       "id": 21,
       "type": "timeseries",
-      "title": "Memoria heap",
+      "title": "Heap memory",
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -873,7 +873,7 @@
         {
           "refId": "A",
           "expr": "sum(jvm_memory_used_bytes{area=\"heap\"})",
-          "legendFormat": "usada",
+          "legendFormat": "used",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -882,7 +882,7 @@
         {
           "refId": "B",
           "expr": "sum(jvm_memory_max_bytes{area=\"heap\"})",
-          "legendFormat": "máximo",
+          "legendFormat": "max",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -893,7 +893,7 @@
   ],
   "links": [
     {
-      "title": "Trazas en Jaeger",
+      "title": "Traces in Jaeger",
       "type": "link",
       "url": "http://localhost:16686/search?service=courses",
       "targetBlank": true

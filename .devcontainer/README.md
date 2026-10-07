@@ -125,7 +125,7 @@ starts. `.claude/settings.local.json` (git-ignored) pre-approves them.
 | `context7` | `npx @upstash/context7-mcp` | Up-to-date docs for Spring Boot 4, Spring AMQP, Spring Security, Spring AI MCP, Testcontainers and Flyway, which are newer than most models' training data | Nothing. `CONTEXT7_API_KEY` is optional |
 | `postgres` | `uvx postgres-mcp` (Postgres MCP Pro) | Inspect the schema Flyway created, run SQL, `EXPLAIN` queries to find N+1 queries and missing indexes, check DB health | `DATABASE_URI` (already set) |
 | `rabbitmq` | `uvx amq-mcp-server-rabbitmq` | List exchanges, queues and bindings, see what is in the DLQ, publish test or poison messages, check consumers | Connect at the start of a session (see below) |
-| `github` | Remote HTTP (`api.githubcopilot.com/mcp`) | Create the repo, open PRs, check GitHub Actions runs (CI bonus) | `GITHUB_PERSONAL_ACCESS_TOKEN` |
+| `github` | Remote HTTP (`api.githubcopilot.com/mcp`) | Create the repo, open PRs, check GitHub Actions runs | `GITHUB_PERSONAL_ACCESS_TOKEN` |
 | `redis` | `uvx redis-mcp-server` (official, Redis) | Inspect the rate-limit buckets (`rate-limit:<rule>:<ip\|user>:<id>`), their TTL, and delete one to reset a client's budget while testing | `REDIS_URL` (already set: the devcontainer's Redis) |
 | `prometheus` | `uvx prometheus-mcp-server` | PromQL queries and scrape targets: check the business, cache, DLQ, outbox and rate-limit metrics after generating traffic | `PROMETHEUS_URL` (already set). Only while the app's `docker compose up` runs |
 | `jaeger` | Remote HTTP, built into Jaeger 2 (`/api/ai/mcp/`) | Find traces and read their topology and critical path, e.g. confirm an enrollment crosses outbox → RabbitMQ → consumers as one trace | `JAEGER_MCP_URL` (already set). Only while the app's `docker compose up` runs |
@@ -137,7 +137,7 @@ request, and so does each `resolve-library-id` call. To make that quota last:
 
 - **Pre-fetched docs.** On first creation, `post-create.sh` runs `.devcontainer/context7/fetch-docs.py`. It
   downloads about 33 targeted answers, one per line of `.devcontainer/context7/topics.txt`, into `.context7-docs/`
-  (about 200 KB, git-ignored). They cover every topic in the brief: the Spring Boot 4 migration, AMQP topology, DLQs
+  (about 200 KB, git-ignored). They cover the project's stack: the Spring Boot 4 migration, AMQP topology, DLQs
   and retries, JWT security, N+1 queries and locking, Testcontainers, the Spring AI MCP server, springdoc and
   Micrometer. The one-time download costs about 33 requests.
 - **Cached, not re-downloaded.** The files live in the workspace, not the image, so rebuilding the container
@@ -182,10 +182,10 @@ The server has no fixed broker. Ask Claude to connect at the start of a session,
 
 It starts with `--allow-mutative-tools`, so it can also create queues and publish messages.
 
-### Testing the app's own MCP server (bonus, section 16 of the brief)
+### Testing the app's own MCP server
 
 The app serves MCP at `http://localhost:8080/mcp` (stateless streamable HTTP), protected by the same bearer token as
-the REST API. See the root README, "Integración MCP", for the tools and how to get a token.
+the REST API. See [`docs/mcp.md`](../docs/mcp.md) for the tools and how to get a token.
 
 ```bash
 npx @modelcontextprotocol/inspector      # open http://localhost:6274, Streamable HTTP, URL http://localhost:8080/mcp,
@@ -198,7 +198,7 @@ claude mcp add --transport http courses http://localhost:8080/mcp --header "Auth
 ```bash
 curl -s https://start.spring.io/starter.tgz \
   -d type=maven-project -d javaVersion=21 -d bootVersion=4.1.1.RELEASE \
-  -d groupId=com.example -d artifactId=courses -d name=courses \
+  -d groupId=io.github.dreyes17 -d packageName=io.github.dreyes17.courses -d artifactId=courses -d name=courses \
   -d dependencies=web,data-jpa,postgresql,flyway,rabbitmq,validation,security,oauth2-resource-server,actuator,prometheus,testcontainers \
   | tar -xzf -
 sed -i 's|4.1.1.RELEASE|4.1.1|' pom.xml   # Initializr writes its metadata id into the parent version

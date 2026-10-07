@@ -1,4 +1,4 @@
-# Scrapes the application's management port inside the Compose network (see README, "Prometheus").
+# Scrapes the application's management port inside the Compose network (see docs/observability.md, "Prometheus and alerts").
 global:
   scrape_interval: 15s
   evaluation_interval: 15s

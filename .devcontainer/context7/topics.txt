@@ -43,7 +43,7 @@
 # Testcontainers
 /testcontainers/testcontainers-java | testcontainers/postgres-rabbitmq.md | PostgreSQLContainer and RabbitMQContainer with JUnit 5 in Testcontainers 2.x
 
-# Spring AI (2.x targets Spring Boot 4) - MCP server bonus
+# Spring AI (2.x targets Spring Boot 4) - MCP server
 /websites/spring_io_spring-ai_reference_2_0-snapshot | spring-ai/mcp-server-webmvc.md | MCP server WebMVC starter configuration, streamable HTTP protocol and endpoints
 /websites/spring_io_spring-ai_reference_2_0-snapshot | spring-ai/mcp-tools.md | Exposing MCP tools with @McpTool and @McpToolParam annotations
 

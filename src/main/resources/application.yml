@@ -4,12 +4,12 @@ spring:
 
   # Requests, @RabbitListener consumers and the @Scheduled outbox relay run on virtual threads: the work is
   # I/O-bound (PostgreSQL, RabbitMQ), so a blocked call parks a cheap virtual thread instead of a pool thread.
-  # The Hikari pool remains the real concurrency limit for database work. See README, "Virtual threads".
+  # The Hikari pool remains the real concurrency limit for database work. See docs/performance.md, "Virtual threads".
   threads:
     virtual:
       enabled: true
 
-  # MCP server (bonus): the same use cases as the REST API, exposed as tools for AI clients at /mcp and protected
+  # MCP server: the same use cases as the REST API, exposed as tools for AI clients at /mcp and protected
   # by the same bearer token. Stateless: every tool call is one self-contained HTTP request, like the REST API,
   # so any instance can serve it and there is no MCP session to keep.
   ai:

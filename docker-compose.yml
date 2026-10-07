@@ -108,7 +108,7 @@ services:
       - "127.0.0.1:9090:9090"
 
   # Receives the application's traces over OTLP (port 4318, internal only) and serves the trace UI. In-memory
-  # storage: traces are lost on restart, which is fine for evaluating the platform locally.
+  # storage: traces are lost on restart, which is fine for running the platform locally.
   jaeger:
     image: jaegertracing/jaeger:2.21.0
     restart: unless-stopped

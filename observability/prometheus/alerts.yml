@@ -1,4 +1,4 @@
-# Alerts on the business and messaging metrics the application exports (see README, "Métricas").
+# Alerts on the business and messaging metrics the application exports (see docs/observability.md, "Metrics").
 groups:
   - name: courses
     rules:
@@ -28,7 +28,7 @@ groups:
         annotations:
           summary: "{{ $value }} outbox event(s) could not be published"
           description: >-
-            The relay gave up on these events; they need manual intervention (see README, known limitations).
+            The relay gave up on these events; they need manual intervention (see README, "Trade-offs and future work").
 
       - alert: RateLimitingUnavailable
         # Redis unreachable: the rate limiter lets every request through (fail-open) and counts each one.
